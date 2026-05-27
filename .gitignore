@@ -21,5 +21,7 @@ pubspec.lock
 *.tmp
 *.swp
 
+config/workspaces.allowlist
+
 .DS_Store
 Thumbs.db

@@ -1,0 +1,372 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+import type { BridgeConfig } from "../config.js";
+import { AppError } from "../errors.js";
+import type { CodexRuntimeHealth } from "../runtime/types.js";
+import type { BridgeSseEvent } from "../sse.js";
+import type { RunStreamBody } from "../validation.js";
+import { WorkspaceService } from "../workspaces/WorkspaceService.js";
+import { AsyncQueue } from "../asyncQueue.js";
+
+import { AppServerClient, type AppServerNotification, type AppServerRequest } from "./AppServerClient.js";
+import {
+  mapAppServerNotification,
+  mapAppServerRequest,
+  messageBelongsToThread
+} from "./mapAppServerEvent.js";
+import type { BridgeThreadQuery } from "./types.js";
+
+const execFileAsync = promisify(execFile);
+
+type ActiveRun = {
+  threadId: string;
+  turnId: string;
+};
+
+type AppServerThread = {
+  id: string;
+  sessionId?: string;
+  preview?: string;
+  name?: string | null;
+  cwd?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  status?: unknown;
+  path?: string | null;
+  modelProvider?: string;
+  source?: unknown;
+  turns?: unknown[];
+};
+
+export class AppServerBridgeService {
+  private readonly activeRuns = new Map<string, ActiveRun>();
+  private readonly pendingApprovals = new Map<string, AppServerRequest>();
+
+  constructor(
+    private readonly deps: {
+      config: BridgeConfig;
+      client: AppServerClient;
+      workspaceService: WorkspaceService;
+    }
+  ) {}
+
+  async health(): Promise<CodexRuntimeHealth> {
+    const checks: CodexRuntimeHealth["checks"] = {
+      codex_cli: "failed",
+      codex_auth: "failed",
+      app_server: "failed"
+    };
+
+    const version = await runCodexCommand(["--version"]);
+    checks.codex_cli = version.ok ? "ok" : "failed";
+
+    try {
+      const account = (await this.deps.client.request("account/read", {
+        refreshToken: false
+      })) as { account?: unknown; requiresOpenaiAuth?: boolean };
+      checks.app_server = "ok";
+      checks.codex_auth = account.requiresOpenaiAuth === false || account.account ? "ok" : "failed";
+    } catch {
+      checks.app_server = "failed";
+    }
+
+    return {
+      runtime: "app-server",
+      ready: checks.codex_cli === "ok" && checks.app_server === "ok" && checks.codex_auth === "ok",
+      auth: checks.codex_auth === "ok" ? "ok" : "missing",
+      codexCliVersion: version.ok ? version.stdout.trim() : null,
+      checks
+    };
+  }
+
+  listWorkspaces() {
+    return this.deps.workspaceService.listWorkspaces();
+  }
+
+  async listThreads(query: BridgeThreadQuery = {}) {
+    const cwd = query.cwd
+      ? this.deps.workspaceService.assertAllowed(query.cwd)
+      : this.deps.workspaceService.getAllowedRoots();
+
+    const response = (await this.deps.client.request("thread/list", {
+      cursor: query.cursor ?? null,
+      limit: query.limit ?? 25,
+      cwd,
+      searchTerm: query.searchTerm ?? null,
+      archived: query.archived ?? false,
+      sortKey: "updated_at",
+      sortDirection: "desc",
+      sourceKinds: ["cli", "vscode", "exec", "appServer", "unknown"]
+    })) as { data: AppServerThread[]; nextCursor: string | null; backwardsCursor: string | null };
+
+    return {
+      data: response.data.map(toPublicThread),
+      next_cursor: response.nextCursor,
+      backwards_cursor: response.backwardsCursor
+    };
+  }
+
+  async createThread(input: { title?: string | undefined; workspace?: string | undefined }) {
+    const cwd = this.deps.workspaceService.assertAllowed(
+      input.workspace ?? this.deps.config.defaultWorkspace
+    );
+    const response = (await this.deps.client.request("thread/start", {
+      cwd,
+      model: this.deps.config.defaultModel,
+      approvalPolicy: "on-request",
+      approvalsReviewer: "user",
+      serviceName: "codex_mobile_bridge",
+      threadSource: "user"
+    })) as { thread: AppServerThread };
+
+    if (input.title) {
+      await this.deps.client.request("thread/name/set", {
+        threadId: response.thread.id,
+        name: input.title
+      });
+      response.thread.name = input.title;
+    }
+
+    return toPublicThread(response.thread);
+  }
+
+  async getThread(threadId: string, options: { includeTurns?: boolean } = {}) {
+    const response = (await this.deps.client.request("thread/read", {
+      threadId,
+      includeTurns: options.includeTurns ?? false
+    })) as { thread: AppServerThread };
+
+    this.deps.workspaceService.assertAllowed(String(response.thread.cwd));
+    return toPublicThread(response.thread);
+  }
+
+  async *runThread(
+    threadId: string,
+    input: RunStreamBody,
+    externalSignal: AbortSignal
+  ): AsyncGenerator<BridgeSseEvent> {
+    const cwd = this.deps.workspaceService.assertAllowed(
+      input.cwd ?? this.deps.config.defaultWorkspace
+    );
+    const queue = new AsyncQueue<AppServerNotification | AppServerRequest>();
+
+    const offNotification = this.deps.client.onNotification((message) => {
+      if (messageBelongsToThread(message, threadId)) {
+        queue.push(message);
+      }
+    });
+    const offServerRequest = this.deps.client.onServerRequest((message) => {
+      if (messageBelongsToThread(message, threadId)) {
+        this.pendingApprovals.set(String(message.id), message);
+        queue.push(message);
+      }
+    });
+
+    let turnId: string | null = null;
+    const abortListener = () => {
+      if (turnId) {
+        void this.cancelRun(threadId, turnId);
+      }
+      queue.close();
+    };
+    externalSignal.addEventListener("abort", abortListener, { once: true });
+
+    try {
+      await this.deps.client.request("thread/resume", {
+        threadId,
+        cwd,
+        approvalPolicy: input.approval_policy ?? "on-request",
+        approvalsReviewer: "user"
+      });
+
+      const turnResponse = (await this.deps.client.request("turn/start", {
+        threadId,
+        input: [{ type: "text", text: input.message }],
+        cwd,
+        approvalPolicy: input.approval_policy ?? "on-request",
+        approvalsReviewer: "user",
+        sandboxPolicy: toSandboxPolicy(input, cwd),
+        model: input.model ?? this.deps.config.defaultModel,
+        effort: input.model_reasoning_effort ?? null
+      })) as { turn: { id: string; status?: string } };
+
+      turnId = turnResponse.turn.id;
+      this.activeRuns.set(turnId, { threadId, turnId });
+
+      yield {
+        event: "run_started",
+        data: {
+          thread_id: threadId,
+          run_id: turnId
+        }
+      };
+
+      for await (const message of queue) {
+        if ("id" in message && "method" in message) {
+          yield mapAppServerRequest(message);
+          continue;
+        }
+
+        const events = mapAppServerNotification(message, {
+          bridgeThreadId: threadId,
+          turnId
+        });
+
+        for (const event of events) {
+          yield event;
+        }
+
+        if (message.method === "turn/completed") {
+          break;
+        }
+      }
+    } finally {
+      if (turnId) {
+        this.activeRuns.delete(turnId);
+      }
+      externalSignal.removeEventListener("abort", abortListener);
+      offNotification();
+      offServerRequest();
+      queue.close();
+    }
+  }
+
+  async cancelRun(threadId: string, runId?: string) {
+    if (runId) {
+      const active = this.activeRuns.get(runId);
+      if (!active || active.threadId !== threadId) {
+        return { cancelled: false, thread_id: threadId, run_id: runId };
+      }
+
+      await this.deps.client.request("turn/interrupt", { threadId, turnId: runId });
+      return { cancelled: true, thread_id: threadId, run_id: runId };
+    }
+
+    const runIds = [...this.activeRuns.values()]
+      .filter((run) => run.threadId === threadId)
+      .map((run) => run.turnId);
+
+    for (const turnId of runIds) {
+      await this.deps.client.request("turn/interrupt", { threadId, turnId });
+    }
+
+    return {
+      cancelled: runIds.length > 0,
+      thread_id: threadId,
+      run_ids: runIds
+    };
+  }
+
+  async listModels(params: { includeHidden?: boolean; limit?: number; cursor?: string | null } = {}) {
+    return this.deps.client.request("model/list", {
+      includeHidden: params.includeHidden ?? false,
+      limit: params.limit ?? 50,
+      cursor: params.cursor ?? null
+    });
+  }
+
+  async readConfig() {
+    return this.deps.client.request("config/read", {
+      includeLayers: false
+    });
+  }
+
+  async writeConfig(input: { keyPath: string; value: unknown; mergeStrategy?: "replace" | "upsert" }) {
+    return this.deps.client.request("config/value/write", {
+      keyPath: input.keyPath,
+      value: input.value,
+      mergeStrategy: input.mergeStrategy ?? "replace"
+    });
+  }
+
+  async readAccount() {
+    return this.deps.client.request("account/read", {
+      refreshToken: false
+    });
+  }
+
+  async listExperimentalFeatures(params: { limit?: number; cursor?: string | null } = {}) {
+    return this.deps.client.request("experimentalFeature/list", {
+      limit: params.limit ?? 50,
+      cursor: params.cursor ?? null
+    });
+  }
+
+  async respondApproval(requestId: string, input: { decision: string; payload?: unknown }) {
+    const pending = this.pendingApprovals.get(requestId);
+    if (!pending) {
+      throw new AppError(404, "approval_not_found", `Approval request not found: ${requestId}`);
+    }
+
+    const result =
+      input.payload && typeof input.payload === "object"
+        ? input.payload
+        : { decision: input.decision };
+
+    await this.deps.client.respond(pending.id, result);
+    this.pendingApprovals.delete(requestId);
+
+    return {
+      resolved: true,
+      approval_id: requestId
+    };
+  }
+}
+
+function toPublicThread(thread: AppServerThread) {
+  return {
+    id: thread.id,
+    session_id: thread.sessionId ?? thread.id,
+    title: thread.name ?? thread.preview ?? "Untitled thread",
+    preview: thread.preview ?? "",
+    cwd: thread.cwd,
+    created_at: toIso(thread.createdAt),
+    updated_at: toIso(thread.updatedAt),
+    status: thread.status,
+    runtime_thread_id: thread.id,
+    model_provider: thread.modelProvider,
+    source: thread.source,
+    path: thread.path ?? null,
+    turns: thread.turns ?? []
+  };
+}
+
+function toIso(value: number | undefined) {
+  return value ? new Date(value * 1000).toISOString() : null;
+}
+
+function toSandboxPolicy(input: RunStreamBody, cwd: string) {
+  const networkAccess = input.network_access_enabled ?? false;
+
+  switch (input.sandbox_mode) {
+    case "danger-full-access":
+      return { type: "dangerFullAccess" };
+
+    case "read-only":
+      return { type: "readOnly", networkAccess };
+
+    case "workspace-write":
+    default:
+      return {
+        type: "workspaceWrite",
+        writableRoots: [cwd, ...(input.additional_directories ?? [])],
+        networkAccess,
+        excludeTmpdirEnvVar: false,
+        excludeSlashTmp: false
+      };
+  }
+}
+
+async function runCodexCommand(args: string[]) {
+  try {
+    const { stdout } = await execFileAsync("codex", args, {
+      timeout: 5000,
+      windowsHide: true,
+      shell: process.platform === "win32"
+    });
+    return { ok: true, stdout };
+  } catch {
+    return { ok: false, stdout: "" };
+  }
+}

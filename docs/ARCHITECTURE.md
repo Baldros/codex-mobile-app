@@ -119,14 +119,13 @@ O bridge entrega eventos por SSE. Isso simplifica o cliente mobile e cobre:
 - heartbeats;
 - conclusao.
 
-### Persistencia leve
+### Historico nativo do Codex
 
-Se o bridge precisar de indice local de threads, usar SQLite com:
+O Bridge nao deve criar persistencia propria para conversas. O historico permanente vem do proprio Codex, em `~/.codex/sessions`, via `codex app-server`.
 
-- `journal_mode=WAL`;
-- `busy_timeout`;
-- schema pequeno;
-- metadados de thread/run, nao snapshots grandes do workspace.
+Rotas como `thread/list`, `thread/read`, `thread/turns/list` e `thread/resume` sao acessadas pelo Bridge e normalizadas para o mobile.
+
+O Bridge pode manter somente estado efemero em memoria para runs ativas, SSE e approvals pendentes.
 
 ### Runbooks primeiro
 

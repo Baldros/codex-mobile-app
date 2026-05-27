@@ -39,6 +39,28 @@ Essa direcao segue a documentacao oficial atual do Codex:
 - `docs/SECURITY_DECISIONS.md`: decisao sobre senha/chave SSH embutida.
 - `docs/IMPLEMENTATION_PLAN.md`: plano incremental de implementacao.
 
+## Backend
+
+O backend MVP esta em `backend/`:
+
+```powershell
+cd backend
+npm run dev
+npm test
+npm run typecheck
+npm run build
+```
+
+Ele implementa o Codex Bridge local com API HTTP/SSE, runtime principal via `codex app-server`, adapter via `@openai/codex-sdk` e runtime `mock` para testes.
+
+Os workspaces permitidos ficam em:
+
+```text
+config/workspaces.allowlist
+```
+
+Um path por linha. O arquivo local e ignorado pelo Git; `config/workspaces.allowlist.example` serve de modelo.
+
 ## Estado atual
 
-Este repositorio esta na fase de fundacao tecnica: arquitetura, contratos e runbooks. A implementacao do bridge e do app mobile vem depois desses limites ficarem estaveis.
+Este repositorio tem a fundacao tecnica e a primeira versao do backend local. A proxima etapa e evoluir o cliente mobile e o SSH tunnel manager.

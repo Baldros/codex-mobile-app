@@ -47,10 +47,10 @@ Campos:
 ## Threads
 
 ```http
-GET /v1/threads
+GET /v1/threads?limit=25&cursor=<cursor>&cwd=<path>&search=<term>&archived=false
 ```
 
-Lista threads conhecidas pelo bridge.
+Lista threads do historico nativo do Codex, filtradas pelos workspaces permitidos.
 
 ```http
 POST /v1/threads
@@ -111,6 +111,95 @@ Content-Type: application/json
 
 O bridge deve tambem cancelar a run se o cliente desconectar do SSE.
 
+## Workspaces
+
+```http
+GET /v1/workspaces
+```
+
+Retorna a allowlist de repositorios/workspaces disponiveis para o app:
+
+```json
+{
+  "data": [
+    {
+      "path": "E:\\codex-mobile-app",
+      "name": "codex-mobile-app",
+      "exists": true,
+      "is_git_repo": true,
+      "source": "file"
+    }
+  ],
+  "allowlist_file": "E:\\codex-mobile-app\\config\\workspaces.allowlist"
+}
+```
+
+O arquivo usa um path por linha. Linhas vazias e linhas iniciadas por `#` sao ignoradas.
+
+## Approvals
+
+Quando o Codex pedir decisao humana, o stream SSE envia:
+
+```text
+event: approval_requested
+data: {"approval_id":"42","approval_type":"command_execution","thread_id":"thr_123","run_id":"turn_123","command":"npm test","available_decisions":["accept","acceptForSession","decline","cancel"]}
+```
+
+Resposta do mobile:
+
+```http
+POST /v1/approvals/:approvalId/respond
+Content-Type: application/json
+
+{
+  "decision": "accept"
+}
+```
+
+Decisoes suportadas no MVP:
+
+- `accept`
+- `acceptForSession`
+- `decline`
+- `cancel`
+
+## Settings
+
+```http
+GET /v1/settings/models
+```
+
+Lista modelos e opcoes de effort/service tier fornecidos pelo Codex.
+
+```http
+GET /v1/settings/config
+```
+
+Le a configuracao efetiva do Codex.
+
+```http
+POST /v1/settings/config
+Content-Type: application/json
+
+{
+  "key_path": "model",
+  "value": "gpt-5.5",
+  "merge_strategy": "replace"
+}
+```
+
+```http
+GET /v1/settings/account
+```
+
+Le o estado de autenticacao local.
+
+```http
+GET /v1/settings/features
+```
+
+Lista feature flags conhecidas pelo Codex.
+
 ## SSH Status
 
 ```http
@@ -164,6 +253,6 @@ data: <json-compacto>
 - Validar `cwd` contra uma allowlist configuravel.
 - Manter compatibilidade mesmo se o backend interno mudar de SDK para app-server.
 
-## Observacao sobre Codex SDK
+## Observacao sobre runtime interno
 
-O MVP pode entregar menos granularidade de evento se o transporte inicial via SDK nao expuser todos os sinais. O contrato mobile deve permanecer estavel; o bridge pode mapear eventos ausentes para mensagens finais ate que o app-server ou outro transporte mais rico seja ativado.
+O contrato mobile permanece HTTP/SSE. Internamente, o Bridge pode usar `codex app-server`, `@openai/codex-sdk` ou runtime `mock`, mas o app mobile nao deve depender do protocolo JSON-RPC do app-server.

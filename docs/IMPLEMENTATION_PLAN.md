@@ -14,6 +14,8 @@ Entregas:
 
 ## Fase 1: Codex Bridge
 
+Status: implementado com runtime `app-server`, SDK fallback e runtime `mock`.
+
 Stack:
 
 - Node.js 18+.
@@ -22,14 +24,31 @@ Stack:
 
 Entregas:
 
-- `GET /health`.
-- `GET /v1/threads`.
-- `POST /v1/threads`.
-- `POST /v1/threads/:threadId/runs/stream`.
-- `POST /v1/threads/:threadId/cancel`.
-- SSE com `heartbeat`, `run_started`, `agent_message`, `error`, `done`.
-- Configuracao de workspace allowlist.
-- Testes de contrato.
+- `GET /health`: implementado.
+- `GET /v1/workspaces`: implementado.
+- `GET /v1/threads`: implementado.
+- `POST /v1/threads`: implementado.
+- `GET /v1/threads/:threadId`: implementado.
+- `POST /v1/threads/:threadId/runs/stream`: implementado.
+- `POST /v1/threads/:threadId/cancel`: implementado.
+- `POST /v1/approvals/:approvalId/respond`: implementado.
+- `GET /v1/settings/models`: implementado.
+- `GET /v1/settings/config`: implementado.
+- `POST /v1/settings/config`: implementado.
+- `GET /v1/settings/account`: implementado.
+- `GET /v1/settings/features`: implementado.
+- `GET /v1/setup/ssh/status`: implementado.
+- SSE com `heartbeat`, `run_started`, `thread_started`, `agent_message`, `tool_start`, `tool_end`, `file_change`, `error`, `done`.
+- Configuracao de workspace allowlist: implementada.
+- Runtime `mock` para teste e desenvolvimento: implementado.
+- Runtime `sdk` via `@openai/codex-sdk`: implementado.
+- Runtime `app-server` via stdio JSON-RPC: implementado.
+- Testes de contrato: implementados com Vitest.
+
+Pendencias desta fase:
+
+- Autorizacao local adicional no bridge, se necessario.
+- Expandir testes com um processo fake de app-server para exercitar mais cenarios de JSON-RPC.
 
 ## Fase 2: Mobile Shell
 
@@ -55,24 +74,24 @@ Entregas:
 - Reconnect com backoff.
 - Host key pinning ou pareamento trust-on-first-use.
 
-## Fase 4: Persistencia
+## Fase 4: Historico nativo
 
 Entregas:
 
-- Indice local de threads no bridge.
-- SQLite com WAL e busy timeout.
-- Historico minimo para retomada.
-- Limpeza de runs antigas.
+- Usar `~/.codex/sessions` via `codex app-server`.
+- Listar threads por workspace.
+- Ler thread e turns paginadas.
+- Retomar thread existente sem banco proprio.
 
 ## Fase 5: Eventos ricos e aprovacoes
 
 Entregas:
 
-- Avaliar `codex app-server` por tras do bridge.
-- Normalizar eventos JSON-RPC para SSE.
-- `approval_requested`.
-- Resposta de aprovacao pelo mobile.
-- Streaming de tool/command output.
+- Normalizar eventos JSON-RPC para SSE: implementado para eventos principais.
+- `approval_requested`: implementado.
+- Resposta de aprovacao pelo mobile: implementado para decisoes basicas.
+- Streaming de tool/command output: implementado.
+- Completar tipos de approval menos comuns conforme aparecerem no app.
 
 ## Fase 6: Pareamento
 
