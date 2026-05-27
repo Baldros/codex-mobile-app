@@ -1,10 +1,10 @@
 # Codex Mobile App
 
-Companion mobile interno para operar um harness local do Codex CLI com seguranca de rede baseada em SSH tunnel.
+Companion mobile interno para operar uma sessao local do Codex CLI/harness com seguranca de rede baseada em SSH tunnel.
 
 ## Direcao tecnica
 
-O app mobile nao deve falar diretamente com a API da OpenAI nem importar o Codex SDK no cliente. A arquitetura alvo e:
+O app mobile nao fala diretamente com a API da OpenAI e nao importa o Codex SDK no cliente. A arquitetura alvo e:
 
 ```text
 Mobile app
@@ -12,7 +12,7 @@ Mobile app
   -> SSH local port forward
   -> desktop 127.0.0.1:8787
   -> Codex Bridge Node/TypeScript
-  -> Codex SDK, codex app-server, ou codex exec
+  -> codex app-server, Codex SDK, ou codex exec
   -> Codex CLI/harness local
 ```
 
@@ -23,13 +23,14 @@ Essa direcao segue a documentacao oficial atual do Codex:
 - Codex CLI reference: https://developers.openai.com/codex/cli/reference
 - Remote app-server notes: https://developers.openai.com/codex/cli/features#connect-the-tui-to-a-remote-app-server
 
-## Convencoes iniciais
+## Convencoes
 
 - Bridge local: `127.0.0.1:8787`
 - Porta local no mobile: `127.0.0.1:18080`
 - Porta remota encaminhada pelo SSH: `127.0.0.1:8787`
 - Transporte mobile padrao: `ssh_tunnel`
-- Stack do bridge: Node/TypeScript, alinhada ao Codex SDK
+- Stack do bridge: Node.js + TypeScript
+- Stack do app: Expo + React Native + TypeScript
 
 ## Documentos
 
@@ -41,10 +42,11 @@ Essa direcao segue a documentacao oficial atual do Codex:
 
 ## Backend
 
-O backend MVP esta em `backend/`:
+O backend local esta em `backend/`. Ele expoe uma API HTTP/SSE em loopback, normaliza o contrato para o mobile e encapsula o runtime real do Codex.
 
 ```powershell
 cd backend
+npm install
 npm run dev
 npm test
 npm run typecheck
@@ -52,11 +54,22 @@ npm run build
 npm run smoke:app-server
 ```
 
-Ele implementa o Codex Bridge local com API HTTP/SSE, runtime principal via `codex app-server`, adapter via `@openai/codex-sdk` e runtime `mock` para testes.
+Runtimes suportados:
+
+- `app-server`: recomendado para historico nativo, settings e human-in-the-loop.
+- `sdk`: adapter simples via `@openai/codex-sdk`.
+- `mock`: runtime deterministico para testes e desenvolvimento sem chamar Codex.
+
+Exemplo para rodar em modo mock:
+
+```powershell
+$env:CODEX_BRIDGE_RUNTIME="mock"
+npm run dev
+```
 
 ## Mobile
 
-O app mobile esta em `mobile/`:
+O app mobile esta em `mobile/`. O MVP atual ja inclui shell operacional, selecao de workspace/modelo/conversa, chat por SSE, eventos de atividade, aprovacoes pendentes, cancelamento e tela basica de settings.
 
 ```powershell
 cd mobile
@@ -64,7 +77,21 @@ npm install
 npx expo start
 ```
 
-Use `npx expo start --web` para visualizar rapidamente no navegador durante o desenvolvimento.
+Use `npx expo start --web` ou `npm run web` para visualizar rapidamente no navegador durante o desenvolvimento.
+
+URLs default:
+
+- Web/dev local: `http://127.0.0.1:8787`
+- Mobile fisico: `http://127.0.0.1:18080`
+
+Para sobrescrever a URL do bridge:
+
+```powershell
+$env:EXPO_PUBLIC_BRIDGE_URL="http://127.0.0.1:8787"
+npx expo start
+```
+
+## Workspaces
 
 Os workspaces permitidos ficam em:
 
@@ -74,6 +101,23 @@ config/workspaces.allowlist
 
 Um path por linha. O arquivo local e ignorado pelo Git; `config/workspaces.allowlist.example` serve de modelo.
 
+## API implementada
+
+- `GET /health`
+- `GET /v1/workspaces`
+- `GET /v1/threads`
+- `POST /v1/threads`
+- `GET /v1/threads/:threadId`
+- `POST /v1/threads/:threadId/runs/stream`
+- `POST /v1/threads/:threadId/cancel`
+- `POST /v1/approvals/:approvalId/respond`
+- `GET /v1/settings/models`
+- `GET /v1/settings/config`
+- `POST /v1/settings/config`
+- `GET /v1/settings/account`
+- `GET /v1/settings/features`
+- `GET /v1/setup/ssh/status`
+
 ## Estado atual
 
-Este repositorio tem a fundacao tecnica e a primeira versao do backend local. A proxima etapa e evoluir o cliente mobile e o SSH tunnel manager.
+Este repositorio tem a fundacao tecnica, o bridge local e o shell mobile inicial implementados. As proximas etapas principais sao robustecer estados de falha no app, evoluir o SSH tunnel manager mobile e adicionar pareamento/seguranca operacional para uso interno em rede local ou 5G.

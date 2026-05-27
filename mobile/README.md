@@ -17,6 +17,13 @@ npm install
 npx expo start
 ```
 
+Se o Metro mostrar `Unable to deserialize cloned data` ao ler o cache,
+limpe o cache do Expo/Metro e inicie novamente:
+
+```powershell
+npm run start:clear
+```
+
 Para visualizar no navegador:
 
 ```powershell
