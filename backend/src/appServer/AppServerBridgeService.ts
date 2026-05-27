@@ -281,9 +281,23 @@ export class AppServerBridgeService {
   }
 
   async readAccount() {
-    return this.deps.client.request("account/read", {
-      refreshToken: false
-    });
+    const [accountResult, rateLimitsResult] = await Promise.allSettled([
+      this.deps.client.request("account/read", {
+        refreshToken: false
+      }),
+      this.deps.client.request("account/rateLimits/read")
+    ]);
+
+    if (accountResult.status === "rejected") {
+      throw accountResult.reason;
+    }
+
+    return {
+      ...(isRecord(accountResult.value) ? accountResult.value : { account: accountResult.value }),
+      rateLimits: rateLimitsResult.status === "fulfilled" ? rateLimitsResult.value : null,
+      rateLimitsError:
+        rateLimitsResult.status === "rejected" ? errorMessage(rateLimitsResult.reason) : null
+    };
   }
 
   async listExperimentalFeatures(params: { limit?: number; cursor?: string | null } = {}) {
@@ -369,4 +383,12 @@ async function runCodexCommand(args: string[]) {
   } catch {
     return { ok: false, stdout: "" };
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

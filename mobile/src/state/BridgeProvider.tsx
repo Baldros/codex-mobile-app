@@ -18,6 +18,7 @@ import type {
   BridgePreferences,
   BridgeSseEvent,
   BridgeThread,
+  CodexAccountResponse,
   ChatMessage,
   CodexConfigResponse,
   CodexModel,
@@ -37,6 +38,7 @@ type BridgeContextValue = {
   threads: BridgeThread[];
   models: CodexModel[];
   config: CodexConfigResponse | null;
+  account: CodexAccountResponse | null;
   selectedWorkspace: WorkspaceEntry | null;
   selectedThread: BridgeThread | null;
   selectedModelId: string | null;
@@ -50,8 +52,10 @@ type BridgeContextValue = {
   pendingApprovals: PendingApproval[];
   isBooting: boolean;
   isRefreshing: boolean;
+  isRefreshingAccount: boolean;
   isRunning: boolean;
   error: string | null;
+  accountError: string | null;
   setBaseUrl: (baseUrl: string) => void;
   setSelectedModelId: (modelId: string) => void;
   setReasoningEffort: (effort: ReasoningEffort) => void;
@@ -73,6 +77,7 @@ type BridgeContextValue = {
     >
   ) => void;
   refreshAll: () => Promise<void>;
+  refreshAccount: () => Promise<void>;
   refreshThreads: () => Promise<void>;
   selectWorkspace: (workspace: WorkspaceEntry) => Promise<void>;
   selectThread: (thread: BridgeThread) => void;
@@ -93,6 +98,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [threads, setThreads] = useState<BridgeThread[]>([]);
   const [models, setModels] = useState<CodexModel[]>([]);
   const [config, setConfig] = useState<CodexConfigResponse | null>(null);
+  const [account, setAccount] = useState<CodexAccountResponse | null>(null);
   const [selectedWorkspace, setSelectedWorkspaceState] = useState<WorkspaceEntry | null>(null);
   const [selectedThread, setSelectedThread] = useState<BridgeThread | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -100,8 +106,10 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [isBooting, setIsBooting] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRefreshingAccount, setIsRefreshingAccount] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
   const activeAbortController = useRef<AbortController | null>(null);
   const activeRunId = useRef<string | null>(null);
 
@@ -130,16 +138,33 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     [client]
   );
 
+  const refreshAccount = useCallback(async () => {
+    setIsRefreshingAccount(true);
+    setAccountError(null);
+
+    try {
+      const response = await client.readAccount();
+      setAccount(response);
+      setAccountError(response.rateLimitsError ?? null);
+    } catch (caught) {
+      setAccount(null);
+      setAccountError(errorMessage(caught));
+    } finally {
+      setIsRefreshingAccount(false);
+    }
+  }, [client]);
+
   const refreshAll = useCallback(async () => {
     setIsRefreshing(true);
     setError(null);
 
     try {
-      const [healthResult, workspaceResult, modelResult, configResult] = await Promise.allSettled([
+      const [healthResult, workspaceResult, modelResult, configResult, accountResult] = await Promise.allSettled([
         client.health(),
         client.listWorkspaces(),
         client.listModels(),
-        client.readConfig()
+        client.readConfig(),
+        client.readAccount()
       ]);
 
       if (healthResult.status === "fulfilled") {
@@ -152,6 +177,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         workspaceResult.status === "fulfilled" ? workspaceResult.value : null;
       const modelResponse = modelResult.status === "fulfilled" ? modelResult.value : null;
       const configResponse = configResult.status === "fulfilled" ? configResult.value : null;
+      const accountResponse = accountResult.status === "fulfilled" ? accountResult.value : null;
 
       if (workspaceResponse) {
         setWorkspaces(workspaceResponse.data);
@@ -167,6 +193,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         setModels([]);
       }
       setConfig(configResponse);
+      setAccount(accountResponse);
+      setAccountError(
+        accountResult.status === "rejected"
+          ? errorMessage(accountResult.reason)
+          : accountResponse?.rateLimitsError ?? null
+      );
 
       const workspace =
         workspaceResponse?.data.find((entry) => entry.path === preferences.selectedWorkspacePath) ??
@@ -574,6 +606,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       threads,
       models,
       config,
+      account,
       selectedWorkspace,
       selectedThread,
       selectedModelId: preferences.selectedModelId ?? null,
@@ -587,8 +620,10 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       pendingApprovals,
       isBooting,
       isRefreshing,
+      isRefreshingAccount,
       isRunning,
       error,
+      accountError,
       setBaseUrl: (baseUrl) => updatePreferences({ baseUrl: baseUrl.trim() }),
       setSelectedModelId: (modelId) => updatePreferences({ selectedModelId: modelId }),
       setReasoningEffort: (reasoningEffort) => updatePreferences({ reasoningEffort }),
@@ -598,6 +633,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setNetworkAccessEnabled: (networkAccessEnabled) => updatePreferences({ networkAccessEnabled }),
       setExecutionSettings: updatePreferences,
       refreshAll,
+      refreshAccount,
       refreshThreads,
       selectWorkspace,
       selectThread,
@@ -610,12 +646,15 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     [
       activities,
       allowlistFile,
+      account,
+      accountError,
       cancelRun,
       config,
       createNewThread,
       error,
       health,
       isBooting,
+      isRefreshingAccount,
       isRefreshing,
       isRunning,
       messages,
@@ -623,6 +662,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       pendingApprovals,
       preferences,
       refreshAll,
+      refreshAccount,
       refreshThreads,
       respondApproval,
       saveCodexDefaults,

@@ -67,6 +67,47 @@ export type CodexConfigResponse = {
   layers?: Record<string, unknown>;
 };
 
+export type CodexAccount = {
+  type?: string;
+  email?: string;
+  planType?: string;
+  [key: string]: unknown;
+};
+
+export type RateLimitWindow = {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+};
+
+export type CreditsSnapshot = {
+  hasCredits: boolean;
+  unlimited: boolean;
+  balance: string | null;
+};
+
+export type RateLimitSnapshot = {
+  limitId: string | null;
+  limitName: string | null;
+  primary: RateLimitWindow | null;
+  secondary: RateLimitWindow | null;
+  credits: CreditsSnapshot | null;
+  planType: string | null;
+  rateLimitReachedType: string | null;
+};
+
+export type CodexRateLimitsResponse = {
+  rateLimits: RateLimitSnapshot;
+  rateLimitsByLimitId?: Record<string, RateLimitSnapshot | undefined> | null;
+};
+
+export type CodexAccountResponse = {
+  account: CodexAccount | null;
+  requiresOpenaiAuth: boolean;
+  rateLimits?: CodexRateLimitsResponse | null;
+  rateLimitsError?: string | null;
+};
+
 export type RunStreamBody = {
   message: string;
   cwd?: string;

@@ -3,6 +3,7 @@ import type {
   BridgeHealth,
   BridgeSseEvent,
   BridgeThread,
+  CodexAccountResponse,
   CodexConfigResponse,
   CodexModel,
   PendingApproval,
@@ -66,6 +67,10 @@ export class BridgeClient {
 
   async readConfig() {
     return this.requestJson<CodexConfigResponse>("/v1/settings/config");
+  }
+
+  async readAccount() {
+    return this.requestJson<CodexAccountResponse>("/v1/settings/account");
   }
 
   async writeConfig(keyPath: string, value: unknown) {

@@ -192,7 +192,29 @@ Content-Type: application/json
 GET /v1/settings/account
 ```
 
-Le o estado de autenticacao local.
+Le o estado de autenticacao local e, quando disponivel no runtime, os limits de uso:
+
+```json
+{
+  "account": {
+    "type": "chatgpt",
+    "email": "user@example.com",
+    "planType": "team"
+  },
+  "requiresOpenaiAuth": false,
+  "rateLimits": {
+    "rateLimits": {
+      "limitId": "codex",
+      "primary": { "usedPercent": 42, "windowDurationMins": 300, "resetsAt": 1779917703 },
+      "secondary": { "usedPercent": 18, "windowDurationMins": 10080, "resetsAt": 1780198466 }
+    }
+  },
+  "rateLimitsError": null
+}
+```
+
+`primary` representa a janela curta de 5h quando `windowDurationMins` e 300.
+`secondary` representa a janela semanal quando `windowDurationMins` e 10080.
 
 ```http
 GET /v1/settings/features
