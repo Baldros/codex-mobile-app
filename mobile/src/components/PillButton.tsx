@@ -5,7 +5,7 @@ import { colors, radii } from "../theme/colors";
 
 type PillButtonProps = {
   label: string;
-  detail?: string | null;
+  detail?: string | null | undefined;
   selected?: boolean;
   disabled?: boolean;
   onPress: () => void;

@@ -35,6 +35,8 @@ export function createApp(deps: AppDependencies = {}) {
     createDefaultThreadService(config, workspaceService, deps.appServerClient);
 
   return async function handleRequest(req: IncomingMessage, res: ServerResponse) {
+    applyCorsHeaders(res);
+
     try {
       await routeRequest(req, res, config, threadService);
     } catch (error) {
@@ -56,6 +58,12 @@ async function routeRequest(
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   const pathname = trimTrailingSlash(url.pathname);
+
+  if (method === "OPTIONS") {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
 
   if (method === "GET" && pathname === "/health") {
     const started = performance.now();
@@ -345,6 +353,17 @@ function sendJson(res: ServerResponse, statusCode: number, payload: unknown) {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.end(`${JSON.stringify(payload)}\n`);
+}
+
+function applyCorsHeaders(res: ServerResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Accept,Authorization,Content-Type,X-Requested-With"
+  );
+  res.setHeader("Access-Control-Max-Age", "86400");
+  res.setHeader("Vary", "Origin");
 }
 
 function sendError(res: ServerResponse, error: unknown) {

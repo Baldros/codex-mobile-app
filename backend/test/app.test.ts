@@ -40,6 +40,29 @@ describe("Codex bridge HTTP API", () => {
     });
   });
 
+  it("allows browser clients to call the bridge API", async () => {
+    const preflight = await fetch(`${baseUrl}/v1/workspaces`, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "http://localhost:8081",
+        "Access-Control-Request-Method": "GET"
+      }
+    });
+
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("*");
+    expect(preflight.headers.get("access-control-allow-methods")).toContain("GET");
+
+    const response = await fetch(`${baseUrl}/v1/workspaces`, {
+      headers: {
+        Origin: "http://localhost:8081"
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
   it("creates and lists threads", async () => {
     const created = await createThread(baseUrl, {
       title: "Bridge test",

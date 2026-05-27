@@ -105,15 +105,22 @@ export class BridgeClient {
     onEvent: (event: BridgeSseEvent) => void,
     signal?: AbortSignal
   ) {
-    const response = await fetch(this.url(`/v1/threads/${encodeURIComponent(threadId)}/runs/stream`), {
+    const init: RequestInit = {
       method: "POST",
       headers: {
         Accept: "text/event-stream",
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(body),
-      signal
-    });
+      body: JSON.stringify(body)
+    };
+    if (signal) {
+      init.signal = signal;
+    }
+
+    const response = await fetch(
+      this.url(`/v1/threads/${encodeURIComponent(threadId)}/runs/stream`),
+      init
+    );
 
     if (!response.ok) {
       throw await toBridgeError(response);
