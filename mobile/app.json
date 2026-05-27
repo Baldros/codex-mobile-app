@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Codex Mobile",
+    "slug": "codex-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "codexmobile",
+    "platforms": ["ios", "android", "web"],
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "internal.codex.mobile"
+    },
+    "android": {
+      "package": "internal.codex.mobile"
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

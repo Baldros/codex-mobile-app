@@ -6,6 +6,8 @@ node_modules/
 dist/
 build/
 coverage/
+.expo/
+web-build/
 
 .dart_tool/
 .flutter-plugins

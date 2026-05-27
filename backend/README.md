@@ -9,7 +9,11 @@ npm run dev
 npm test
 npm run typecheck
 npm run build
+npm run smoke:app-server
 ```
+
+`smoke:app-server` sobe o Bridge em uma porta temporaria, valida `codex app-server`,
+cria uma conversa real no historico nativo do Codex e confere o `cwd` da sessao.
 
 ## Runtime
 

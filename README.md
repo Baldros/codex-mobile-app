@@ -49,9 +49,22 @@ npm run dev
 npm test
 npm run typecheck
 npm run build
+npm run smoke:app-server
 ```
 
 Ele implementa o Codex Bridge local com API HTTP/SSE, runtime principal via `codex app-server`, adapter via `@openai/codex-sdk` e runtime `mock` para testes.
+
+## Mobile
+
+O app mobile esta em `mobile/`:
+
+```powershell
+cd mobile
+npm install
+npx expo start
+```
+
+Use `npx expo start --web` para visualizar rapidamente no navegador durante o desenvolvimento.
 
 Os workspaces permitidos ficam em:
 

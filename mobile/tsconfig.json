@@ -1,0 +1,22 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "types": [
+      "jest"
+    ],
+    "lib": [
+      "DOM",
+      "ES2023"
+    ]
+  },
+  "include": [
+    "app",
+    "src",
+    "test",
+    "expo-env.d.ts",
+    ".expo/types/**/*.ts"
+  ]
+}
