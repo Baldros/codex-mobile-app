@@ -5,18 +5,21 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import type { BridgeConfig } from "../src/config.js";
 import { MockCodexRuntime } from "../src/runtime/MockCodexRuntime.js";
+import type { RuntimeThreadOptions } from "../src/runtime/types.js";
 import { InMemoryThreadStore } from "../src/threads/InMemoryThreadStore.js";
 import { ThreadService } from "../src/threads/ThreadService.js";
 
 describe("Codex bridge HTTP API", () => {
   let server: Server;
   let baseUrl: string;
+  let runtime: CapturingMockCodexRuntime;
 
   beforeEach(async () => {
     const config = testConfig();
+    runtime = new CapturingMockCodexRuntime();
     const threadService = new ThreadService({
       config,
-      runtime: new MockCodexRuntime(),
+      runtime,
       store: new InMemoryThreadStore()
     });
     server = createServer(createApp({ config, threadService }));
@@ -100,6 +103,31 @@ describe("Codex bridge HTTP API", () => {
     expect(events.at(-1)?.data).toMatchObject({ status: "completed" });
   });
 
+  it("passes execution settings to the runtime", async () => {
+    const created = await createThread(baseUrl, { workspace: process.cwd() });
+
+    const response = await fetch(`${baseUrl}/v1/threads/${created.thread.id}/runs/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "use explicit execution settings",
+        approval_policy: "never",
+        sandbox_mode: "danger-full-access",
+        model_reasoning_effort: "high",
+        network_access_enabled: true
+      })
+    });
+
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(runtime.lastOptions).toMatchObject({
+      approvalPolicy: "never",
+      sandboxMode: "danger-full-access",
+      modelReasoningEffort: "high",
+      networkAccessEnabled: true
+    });
+  });
+
   it("rejects workspaces outside the allowlist", async () => {
     const response = await fetch(`${baseUrl}/v1/threads`, {
       method: "POST",
@@ -174,6 +202,20 @@ describe("Codex bridge cancellation", () => {
     });
   });
 });
+
+class CapturingMockCodexRuntime extends MockCodexRuntime {
+  lastOptions: RuntimeThreadOptions | null = null;
+
+  override startThread(options: RuntimeThreadOptions) {
+    this.lastOptions = options;
+    return super.startThread(options);
+  }
+
+  override resumeThread(id: string, options: RuntimeThreadOptions) {
+    this.lastOptions = options;
+    return super.resumeThread(id, options);
+  }
+}
 
 function testConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
   const config: BridgeConfig = {

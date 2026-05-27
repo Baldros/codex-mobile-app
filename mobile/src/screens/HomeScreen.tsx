@@ -2,10 +2,13 @@ import { router } from "expo-router";
 import {
   Bot,
   FolderGit2,
+  Gauge,
   ListTree,
   MessageSquarePlus,
   RefreshCcw,
   Send,
+  ShieldCheck,
+  SlidersHorizontal,
   Settings,
   Square,
   Terminal
@@ -28,6 +31,7 @@ import { PillButton } from "../components/PillButton";
 import { Screen } from "../components/Screen";
 import { StatusPill } from "../components/StatusPill";
 import type { ChatMessage, PendingApproval } from "../domain/bridge";
+import { EXECUTION_PRESETS, executionDetail, findExecutionPreset } from "../domain/executionModes";
 import { useBridge } from "../state/BridgeProvider";
 import { colors, radii, spacing } from "../theme/colors";
 import { compactPath } from "../utils/format";
@@ -43,6 +47,18 @@ export function HomeScreen() {
   );
   const effortOptions = selectedModel?.supportedReasoningEfforts?.map((item) => item.reasoningEffort);
   const efforts = effortOptions && effortOptions.length > 0 ? effortOptions : [...fallbackEfforts];
+  const activeExecutionPreset = findExecutionPreset({
+    sandboxMode: bridge.sandboxMode,
+    approvalPolicy: bridge.approvalPolicy,
+    networkAccessEnabled: bridge.networkAccessEnabled
+  });
+  const currentExecutionDetail =
+    activeExecutionPreset?.detail ??
+    executionDetail({
+      sandboxMode: bridge.sandboxMode,
+      approvalPolicy: bridge.approvalPolicy,
+      networkAccessEnabled: bridge.networkAccessEnabled
+    });
 
   const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
 
@@ -127,28 +143,73 @@ export function HomeScreen() {
           <IconAction icon={MessageSquarePlus} label="Nova conversa" onPress={() => void bridge.createNewThread()} />
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.effortRow}
-        >
-          {efforts.map((effort) => (
+        <View style={styles.selectorBlock}>
+          <View style={styles.selectorHeader}>
+            <ShieldCheck size={16} color={colors.textMuted} />
+            <Text style={styles.selectorTitle}>Modo de execucao</Text>
+            <Text numberOfLines={1} style={styles.selectorMeta}>
+              {activeExecutionPreset?.label ?? "Personalizado"}
+            </Text>
             <Pressable
-              key={effort}
-              onPress={() => bridge.setReasoningEffort(effort)}
-              style={[styles.effortChip, bridge.reasoningEffort === effort && styles.effortChipActive]}
+              accessibilityRole="button"
+              accessibilityLabel="Ajustes avancados"
+              onPress={() => router.push("/settings")}
+              style={({ pressed }) => [styles.advancedButton, pressed && styles.advancedButtonPressed]}
             >
-              <Text
-                style={[
-                  styles.effortChipText,
-                  bridge.reasoningEffort === effort && styles.effortChipTextActive
-                ]}
-              >
-                {effort}
-              </Text>
+              <SlidersHorizontal size={16} color={colors.text} />
+              <Text style={styles.advancedButtonText}>Avancado</Text>
             </Pressable>
-          ))}
-        </ScrollView>
+          </View>
+          <Text numberOfLines={1} style={styles.executionSummary}>
+            {currentExecutionDetail}
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {EXECUTION_PRESETS.map((preset) => (
+              <PillButton
+                key={preset.id}
+                label={preset.label}
+                detail={preset.detail}
+                selected={activeExecutionPreset?.id === preset.id}
+                onPress={() =>
+                  bridge.setExecutionSettings({
+                    sandboxMode: preset.sandboxMode,
+                    approvalPolicy: preset.approvalPolicy,
+                    networkAccessEnabled: preset.networkAccessEnabled
+                  })
+                }
+              />
+            ))}
+          </ScrollView>
+        </View>
+
+        <View style={styles.selectorBlock}>
+          <View style={styles.selectorHeader}>
+            <Gauge size={16} color={colors.textMuted} />
+            <Text style={styles.selectorTitle}>Esforco</Text>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.effortRow}
+          >
+            {efforts.map((effort) => (
+              <Pressable
+                key={effort}
+                onPress={() => bridge.setReasoningEffort(effort)}
+                style={[styles.effortChip, bridge.reasoningEffort === effort && styles.effortChipActive]}
+              >
+                <Text
+                  style={[
+                    styles.effortChipText,
+                    bridge.reasoningEffort === effort && styles.effortChipTextActive
+                  ]}
+                >
+                  {effort}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
 
         {bridge.activities.length > 0 ? (
           <View style={styles.activityRail}>
@@ -331,6 +392,38 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     textTransform: "uppercase"
   },
+  selectorMeta: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.textSubtle,
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "right"
+  },
+  advancedButton: {
+    minHeight: 32,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
+  },
+  advancedButtonPressed: {
+    opacity: 0.82
+  },
+  advancedButtonText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "800"
+  },
+  executionSummary: {
+    color: colors.textMuted,
+    fontSize: 12,
+    marginBottom: spacing.sm
+  },
   threadBar: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
@@ -365,8 +458,8 @@ const styles = StyleSheet.create({
     marginTop: 2
   },
   effortRow: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    paddingRight: spacing.sm,
+    paddingBottom: spacing.sm,
     gap: spacing.sm
   },
   effortChip: {

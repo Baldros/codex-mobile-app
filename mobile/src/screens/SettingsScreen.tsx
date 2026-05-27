@@ -5,12 +5,18 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from
 
 import { IconAction } from "../components/IconAction";
 import { Screen } from "../components/Screen";
-import type { ApprovalPolicy, SandboxMode } from "../domain/bridge";
+import type { ApprovalPolicy, ReasoningEffort, SandboxMode } from "../domain/bridge";
+import {
+  EXECUTION_PRESETS,
+  approvalPolicies,
+  executionDetail,
+  findExecutionPreset,
+  sandboxModes
+} from "../domain/executionModes";
 import { useBridge } from "../state/BridgeProvider";
 import { colors, radii, spacing } from "../theme/colors";
 
-const approvalPolicies: ApprovalPolicy[] = ["on-request", "on-failure", "never", "untrusted"];
-const sandboxModes: SandboxMode[] = ["workspace-write", "read-only", "danger-full-access"];
+const fallbackEfforts: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
 
 export function SettingsScreen() {
   const bridge = useBridge();
@@ -20,6 +26,13 @@ export function SettingsScreen() {
     [bridge.models, bridge.selectedModelId]
   );
   const serviceTiers = selectedModel?.serviceTiers ?? [];
+  const effortOptions = selectedModel?.supportedReasoningEfforts?.map((item) => item.reasoningEffort);
+  const efforts = effortOptions && effortOptions.length > 0 ? effortOptions : fallbackEfforts;
+  const activeExecutionPreset = findExecutionPreset({
+    sandboxMode: bridge.sandboxMode,
+    approvalPolicy: bridge.approvalPolicy,
+    networkAccessEnabled: bridge.networkAccessEnabled
+  });
 
   return (
     <Screen>
@@ -44,6 +57,55 @@ export function SettingsScreen() {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Modo de execucao</Text>
+          <InfoRow
+            label={activeExecutionPreset?.label ?? "Personalizado"}
+            value={executionDetail({
+              sandboxMode: bridge.sandboxMode,
+              approvalPolicy: bridge.approvalPolicy,
+              networkAccessEnabled: bridge.networkAccessEnabled
+            })}
+          />
+          <View style={styles.presetGrid}>
+            {EXECUTION_PRESETS.map((preset) => (
+              <Pressable
+                key={preset.id}
+                onPress={() =>
+                  bridge.setExecutionSettings({
+                    sandboxMode: preset.sandboxMode,
+                    approvalPolicy: preset.approvalPolicy,
+                    networkAccessEnabled: preset.networkAccessEnabled
+                  })
+                }
+                style={[
+                  styles.preset,
+                  activeExecutionPreset?.id === preset.id && styles.presetActive
+                ]}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.presetLabel,
+                    activeExecutionPreset?.id === preset.id && styles.presetLabelActive
+                  ]}
+                >
+                  {preset.label}
+                </Text>
+                <Text
+                  numberOfLines={2}
+                  style={[
+                    styles.presetDetail,
+                    activeExecutionPreset?.id === preset.id && styles.presetDetailActive
+                  ]}
+                >
+                  {preset.detail}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Bridge</Text>
           <TextInput
             value={baseUrlDraft}
@@ -59,7 +121,7 @@ export function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Run</Text>
+          <Text style={styles.sectionTitle}>Avancado</Text>
           <OptionGrid
             title="Approval"
             options={approvalPolicies}
@@ -81,6 +143,12 @@ export function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Modelo</Text>
           <InfoRow label="Atual" value={selectedModel?.displayName ?? bridge.selectedModelId ?? "-"} />
+          <OptionGrid
+            title="Reasoning effort"
+            options={efforts}
+            selected={bridge.reasoningEffort}
+            onSelect={(value) => bridge.setReasoningEffort(value as ReasoningEffort)}
+          />
           {serviceTiers.length > 0 ? (
             <OptionGrid
               title="Service tier"
@@ -264,6 +332,42 @@ const styles = StyleSheet.create({
   },
   optionTextActive: {
     color: colors.accent
+  },
+  presetGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    marginTop: spacing.sm
+  },
+  preset: {
+    width: "48%",
+    minHeight: 68,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    padding: spacing.sm
+  },
+  presetActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft
+  },
+  presetLabel: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800"
+  },
+  presetLabelActive: {
+    color: colors.accent
+  },
+  presetDetail: {
+    color: colors.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 4
+  },
+  presetDetailActive: {
+    color: colors.text
   },
   switchRow: {
     minHeight: 48,

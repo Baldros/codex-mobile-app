@@ -59,6 +59,19 @@ type BridgeContextValue = {
   setSandboxMode: (mode: SandboxMode) => void;
   setServiceTier: (tier: string | null) => void;
   setNetworkAccessEnabled: (enabled: boolean) => void;
+  setExecutionSettings: (
+    settings: Partial<
+      Pick<
+        BridgePreferences,
+        | "approvalPolicy"
+        | "networkAccessEnabled"
+        | "reasoningEffort"
+        | "sandboxMode"
+        | "selectedModelId"
+        | "serviceTier"
+      >
+    >
+  ) => void;
   refreshAll: () => Promise<void>;
   refreshThreads: () => Promise<void>;
   selectWorkspace: (workspace: WorkspaceEntry) => Promise<void>;
@@ -502,6 +515,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       writes.push(client.writeConfig("model_reasoning_effort", preferences.reasoningEffort));
       writes.push(client.writeConfig("approval_policy", preferences.approvalPolicy));
       writes.push(client.writeConfig("sandbox_mode", preferences.sandboxMode));
+      writes.push(
+        client.writeConfig("sandbox_workspace_write.network_access", preferences.networkAccessEnabled)
+      );
       if (preferences.serviceTier) {
         writes.push(client.writeConfig("service_tier", preferences.serviceTier));
       }
@@ -544,6 +560,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setSandboxMode: (sandboxMode) => updatePreferences({ sandboxMode }),
       setServiceTier: (serviceTier) => updatePreferences({ serviceTier }),
       setNetworkAccessEnabled: (networkAccessEnabled) => updatePreferences({ networkAccessEnabled }),
+      setExecutionSettings: updatePreferences,
       refreshAll,
       refreshThreads,
       selectWorkspace,

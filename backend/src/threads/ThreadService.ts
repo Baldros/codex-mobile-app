@@ -202,6 +202,9 @@ export class ThreadService {
     if (input.sandbox_mode !== undefined) {
       options.sandboxMode = input.sandbox_mode;
     }
+    if (input.model_reasoning_effort !== undefined) {
+      options.modelReasoningEffort = input.model_reasoning_effort;
+    }
     if (input.network_access_enabled !== undefined) {
       options.networkAccessEnabled = input.network_access_enabled;
     }
