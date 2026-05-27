@@ -135,23 +135,43 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setError(null);
 
     try {
-      const [healthResponse, workspaceResponse, modelResponse, configResponse] = await Promise.all([
+      const [healthResult, workspaceResult, modelResult, configResult] = await Promise.allSettled([
         client.health(),
         client.listWorkspaces(),
         client.listModels(),
-        client.readConfig().catch(() => null)
+        client.readConfig()
       ]);
 
-      setHealth(healthResponse);
-      setWorkspaces(workspaceResponse.data);
-      setAllowlistFile(workspaceResponse.allowlist_file);
-      setModels(modelResponse.data);
+      if (healthResult.status === "fulfilled") {
+        setHealth(healthResult.value);
+      } else {
+        setHealth(null);
+      }
+
+      const workspaceResponse =
+        workspaceResult.status === "fulfilled" ? workspaceResult.value : null;
+      const modelResponse = modelResult.status === "fulfilled" ? modelResult.value : null;
+      const configResponse = configResult.status === "fulfilled" ? configResult.value : null;
+
+      if (workspaceResponse) {
+        setWorkspaces(workspaceResponse.data);
+        setAllowlistFile(workspaceResponse.allowlist_file);
+      } else {
+        setWorkspaces([]);
+        setAllowlistFile(null);
+      }
+
+      if (modelResponse) {
+        setModels(modelResponse.data);
+      } else {
+        setModels([]);
+      }
       setConfig(configResponse);
 
       const workspace =
-        workspaceResponse.data.find((entry) => entry.path === preferences.selectedWorkspacePath) ??
-        workspaceResponse.data.find((entry) => entry.exists) ??
-        workspaceResponse.data[0] ??
+        workspaceResponse?.data.find((entry) => entry.path === preferences.selectedWorkspacePath) ??
+        workspaceResponse?.data.find((entry) => entry.exists) ??
+        workspaceResponse?.data[0] ??
         null;
 
       setSelectedWorkspaceState(workspace);
@@ -164,10 +184,26 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       }
 
       const configModel = readConfigString(configResponse, "model");
-      const defaultModel = modelResponse.data.find((model) => model.isDefault)?.id;
-      const modelId = preferences.selectedModelId ?? configModel ?? defaultModel ?? modelResponse.data[0]?.id;
+      const defaultModel = modelResponse?.data.find((model) => model.isDefault)?.id;
+      const modelId = preferences.selectedModelId ?? configModel ?? defaultModel ?? modelResponse?.data[0]?.id;
       if (modelId) {
         updatePreferences({ selectedModelId: modelId });
+      }
+
+      const failures = [
+        healthResult.status === "rejected" ? "health" : null,
+        workspaceResult.status === "rejected" ? "workspaces" : null,
+        modelResult.status === "rejected" ? "models" : null,
+        configResult.status === "rejected" ? "config" : null
+      ].filter((item): item is string => Boolean(item));
+
+      if (failures.length > 0) {
+        const allBridgeCallsFailed = failures.length === 4;
+        setError(
+          allBridgeCallsFailed
+            ? `Bridge indisponivel em ${preferences.baseUrl}. Inicie o backend ou ajuste a URL em Settings.`
+            : `Falha ao carregar: ${failures.join(", ")}.`
+        );
       }
     } catch (caught) {
       setError(errorMessage(caught));
