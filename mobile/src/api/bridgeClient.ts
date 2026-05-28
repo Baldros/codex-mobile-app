@@ -25,8 +25,15 @@ type ListResponse<T> = {
   nextCursor?: string | null;
 };
 
+type BridgeClientOptions = {
+  ensureTransportReady?: (() => Promise<void>) | undefined;
+};
+
 export class BridgeClient {
-  constructor(readonly baseUrl: string) {}
+  constructor(
+    readonly baseUrl: string,
+    private readonly options: BridgeClientOptions = {}
+  ) {}
 
   health() {
     return this.requestJson<BridgeHealth>("/health");
@@ -110,6 +117,8 @@ export class BridgeClient {
     onEvent: (event: BridgeSseEvent) => void,
     signal?: AbortSignal
   ) {
+    await this.options.ensureTransportReady?.();
+
     const init: RequestInit = {
       method: "POST",
       headers: {
@@ -158,6 +167,8 @@ export class BridgeClient {
   }
 
   private async requestJson<T>(path: string, init: RequestInit = {}) {
+    await this.options.ensureTransportReady?.();
+
     const response = await fetch(this.url(path), {
       ...init,
       headers: {

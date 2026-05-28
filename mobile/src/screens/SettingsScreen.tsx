@@ -121,6 +121,37 @@ export function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Tunnel build</Text>
+          <InfoRow label="Gateway" value={bridge.buildConfig.gateway} />
+          <InfoRow label="State" value={bridge.tunnelStatus.state} />
+          <InfoRow label="Local URL" value={bridge.buildConfig.sshTunnel.localUrl} />
+          <InfoRow
+            label="Remote API"
+            value={`${bridge.buildConfig.sshTunnel.remoteApiHost}:${bridge.buildConfig.sshTunnel.remoteApiPort}`}
+          />
+          <InfoRow
+            label="SSH endpoints"
+            value={
+              bridge.buildConfig.sshTunnel.endpointCandidates
+                .map((endpoint) => endpoint.displayValue)
+                .join(", ") || "-"
+            }
+          />
+          <InfoRow label="SSH user" value={bridge.buildConfig.sshTunnel.username || "-"} />
+          <InfoRow label="Auth mode" value={bridge.buildConfig.sshTunnel.authMode ?? "-"} />
+          <InfoRow label="Active endpoint" value={bridge.tunnelStatus.activeEndpoint ?? "-"} />
+          <InfoRow
+            label="Health"
+            value={
+              bridge.tunnelStatus.lastHealthCheckMs === null
+                ? "-"
+                : `${bridge.tunnelStatus.lastHealthCheckMs}ms`
+            }
+          />
+          <InfoRow label="Config" value={bridge.tunnelConfigIssue ?? "ok"} />
+        </View>
+
+        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Avancado</Text>
           <OptionGrid
             title="Approval"

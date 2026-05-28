@@ -1,0 +1,34 @@
+{
+  "cli": {
+    "version": ">= 15.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "CODEX_MOBILE_GATEWAY": "ssh_tunnel",
+        "CODEX_MOBILE_API_BASE_URL": "http://127.0.0.1:18080",
+        "CODEX_MOBILE_SSH_TUNNEL_LOCAL_URL": "http://127.0.0.1:18080",
+        "CODEX_MOBILE_SSH_REMOTE_API_HOST": "127.0.0.1",
+        "CODEX_MOBILE_SSH_REMOTE_API_PORT": "8787"
+      }
+    },
+    "internal": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "CODEX_MOBILE_GATEWAY": "ssh_tunnel",
+        "CODEX_MOBILE_API_BASE_URL": "http://127.0.0.1:18080",
+        "CODEX_MOBILE_SSH_TUNNEL_LOCAL_URL": "http://127.0.0.1:18080",
+        "CODEX_MOBILE_SSH_REMOTE_API_HOST": "127.0.0.1",
+        "CODEX_MOBILE_SSH_REMOTE_API_PORT": "8787"
+      }
+    }
+  }
+}

@@ -17,7 +17,9 @@
       "bundleIdentifier": "internal.codex.mobile"
     },
     "android": {
-      "package": "internal.codex.mobile"
+      "package": "internal.codex.mobile",
+      "permissions": ["INTERNET"],
+      "usesCleartextTraffic": true
     },
     "web": {
       "bundler": "metro"

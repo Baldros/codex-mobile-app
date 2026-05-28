@@ -11,6 +11,11 @@ import React, {
 
 import { BridgeClient, approvalSummary } from "../api/bridgeClient";
 import { DEFAULT_PREFERENCES } from "../config/defaults";
+import {
+  getCodexMobileBuildConfig,
+  validateSshTunnelBuildConfig,
+  type CodexMobileBuildConfig
+} from "../config/mobileBuildConfig";
 import type {
   ActivityItem,
   ApprovalPolicy,
@@ -28,6 +33,7 @@ import type {
   WorkspaceEntry
 } from "../domain/bridge";
 import { loadPreferences, savePreferences } from "../storage/preferences";
+import { SshTunnelManager, type TunnelStatusSnapshot } from "../transport/SshTunnelManager";
 
 type BridgeContextValue = {
   preferences: BridgePreferences;
@@ -39,6 +45,9 @@ type BridgeContextValue = {
   models: CodexModel[];
   config: CodexConfigResponse | null;
   account: CodexAccountResponse | null;
+  buildConfig: CodexMobileBuildConfig;
+  tunnelConfigIssue: string | null;
+  tunnelStatus: TunnelStatusSnapshot;
   selectedWorkspace: WorkspaceEntry | null;
   selectedThread: BridgeThread | null;
   selectedModelId: string | null;
@@ -112,8 +121,30 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [accountError, setAccountError] = useState<string | null>(null);
   const activeAbortController = useRef<AbortController | null>(null);
   const activeRunId = useRef<string | null>(null);
+  const buildConfig = useMemo(() => getCodexMobileBuildConfig(), []);
+  const tunnelConfigIssue = useMemo(
+    () => validateSshTunnelBuildConfig(buildConfig),
+    [buildConfig]
+  );
+  const tunnelManager = useMemo(() => new SshTunnelManager(buildConfig), [buildConfig]);
+  const [tunnelStatus, setTunnelStatus] = useState<TunnelStatusSnapshot>(
+    tunnelManager.getSnapshot()
+  );
+  const shouldUseEmbeddedTunnel =
+    buildConfig.gateway === "ssh_tunnel" &&
+    normalizeUrl(preferences.baseUrl) === normalizeUrl(buildConfig.sshTunnel.localUrl);
 
-  const client = useMemo(() => new BridgeClient(preferences.baseUrl), [preferences.baseUrl]);
+  const client = useMemo(
+    () =>
+      new BridgeClient(preferences.baseUrl, {
+        ensureTransportReady: shouldUseEmbeddedTunnel
+          ? () => tunnelManager.ensureReady()
+          : undefined
+      }),
+    [preferences.baseUrl, shouldUseEmbeddedTunnel, tunnelManager]
+  );
+
+  useEffect(() => tunnelManager.subscribe(setTunnelStatus), [tunnelManager]);
 
   const updatePreferences = useCallback((patch: Partial<BridgePreferences>) => {
     setPreferences((current) => {
@@ -607,6 +638,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       models,
       config,
       account,
+      buildConfig,
+      tunnelConfigIssue,
+      tunnelStatus,
       selectedWorkspace,
       selectedThread,
       selectedModelId: preferences.selectedModelId ?? null,
@@ -648,6 +682,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       allowlistFile,
       account,
       accountError,
+      buildConfig,
       cancelRun,
       config,
       createNewThread,
@@ -671,6 +706,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       sendMessage,
       selectedThread,
       selectedWorkspace,
+      tunnelStatus,
+      tunnelConfigIssue,
       threads,
       updatePreferences,
       workspaces
@@ -695,6 +732,10 @@ function readConfigString(config: CodexConfigResponse | null, key: string) {
 
 function createId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeUrl(value: string) {
+  return value.trim().replace(/\/+$/, "");
 }
 
 function asString(value: unknown) {
