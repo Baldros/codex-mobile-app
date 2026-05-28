@@ -31,6 +31,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -61,20 +62,25 @@ import { compactPath } from "../utils/format";
 
 type MenuPanel = "main" | "models" | "effort" | "fast";
 const keyboardComposerGap = spacing.xl + spacing.xs;
+const restoredWindowHeightTolerance = spacing.xl * 2;
 
 export function HomeScreen() {
   const bridge = useBridge();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const [draft, setDraft] = useState("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [limitsVisible, setLimitsVisible] = useState(false);
   const messageListRef = useRef<FlatList<ChatMessage> | null>(null);
+  const maxWindowHeightRef = useRef(windowHeight);
+  const keyboardShrinkObservedRef = useRef(false);
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
     [bridge.models, bridge.selectedModelId]
   );
   const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
-  const composerBottomPadding = spacing.md + (keyboardVisible ? keyboardComposerGap : insets.bottom);
+  const composerBottomInset = keyboardVisible ? Math.max(keyboardComposerGap, insets.bottom) : insets.bottom;
+  const composerBottomPadding = spacing.md + composerBottomInset;
   const latestMessageMarker = useMemo(() => {
     const last = bridge.messages[bridge.messages.length - 1];
     if (!last) {
@@ -95,14 +101,41 @@ export function HomeScreen() {
   }, [bridge.messages]);
 
   useEffect(() => {
-    const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
-    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+    const showSubscription = Keyboard.addListener("keyboardDidShow", (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      keyboardShrinkObservedRef.current = false;
+      setKeyboardVisible(true);
+    });
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      keyboardShrinkObservedRef.current = false;
+      setKeyboardVisible(false);
+    });
 
     return () => {
       showSubscription.remove();
       hideSubscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    maxWindowHeightRef.current = Math.max(maxWindowHeightRef.current, windowHeight);
+    if (!keyboardVisible) {
+      keyboardShrinkObservedRef.current = false;
+      return;
+    }
+    if (windowHeight < maxWindowHeightRef.current - restoredWindowHeightTolerance) {
+      keyboardShrinkObservedRef.current = true;
+      return;
+    }
+    if (
+      keyboardShrinkObservedRef.current &&
+      windowHeight >= maxWindowHeightRef.current - restoredWindowHeightTolerance
+    ) {
+      keyboardShrinkObservedRef.current = false;
+      setKeyboardVisible(false);
+    }
+  }, [keyboardVisible, windowHeight]);
 
   useEffect(() => {
     if (bridge.messages.length === 0) {
@@ -178,6 +211,7 @@ export function HomeScreen() {
             <EmptyChat
               isLoading={bridge.isLoadingThreadContent}
               hasSelectedThread={Boolean(bridge.selectedThread)}
+              hasWorkspace={Boolean(bridge.selectedWorkspace)}
             />
           }
         />
@@ -196,6 +230,15 @@ export function HomeScreen() {
             multiline
             placeholder="Message Codex"
             placeholderTextColor={colors.textSubtle}
+            onBlur={() => {
+              keyboardShrinkObservedRef.current = false;
+              setKeyboardVisible(false);
+            }}
+            onFocus={() => {
+              if (Keyboard.isVisible()) {
+                setKeyboardVisible(true);
+              }
+            }}
             style={styles.input}
           />
           {bridge.isRunning ? (
@@ -767,13 +810,23 @@ function ApprovalTimelinePart({
   );
 }
 
-function EmptyChat({ isLoading, hasSelectedThread }: { isLoading: boolean; hasSelectedThread: boolean }) {
-  const title = isLoading ? "Loading conversation" : hasSelectedThread ? "No readable messages" : "Ready";
+function EmptyChat({
+  isLoading,
+  hasSelectedThread,
+  hasWorkspace
+}: {
+  isLoading: boolean;
+  hasSelectedThread: boolean;
+  hasWorkspace: boolean;
+}) {
+  const title = isLoading ? "Loading conversation" : hasSelectedThread ? "No readable messages" : "New conversation";
   const text = isLoading
     ? "Fetching this thread history."
     : hasSelectedThread
       ? "This thread opened, but no text turns were returned by the bridge."
-      : "Choose a repository and start a conversation.";
+      : hasWorkspace
+        ? "Send a message to create this conversation."
+        : "Choose a repository and start a conversation.";
 
   return (
     <View style={styles.empty}>

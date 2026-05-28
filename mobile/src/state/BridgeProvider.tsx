@@ -105,7 +105,7 @@ type BridgeContextValue = {
   restoreThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
   removeWorkspace: (workspace: WorkspaceEntry) => Promise<WorkspaceMutationResponse | null>;
   restoreWorkspace: (path: string) => Promise<WorkspaceMutationResponse | null>;
-  createNewThread: () => Promise<BridgeThread | null>;
+  createNewThread: () => Promise<void>;
   sendMessage: (message: string) => Promise<void>;
   cancelRun: () => Promise<void>;
   respondApproval: (approval: PendingApproval, decision: string) => Promise<void>;
@@ -136,7 +136,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [account, setAccount] = useState<CodexAccountResponse | null>(null);
   const [capabilities, setCapabilities] = useState<BridgeCapabilities>(DEFAULT_CAPABILITIES);
   const [selectedWorkspace, setSelectedWorkspaceState] = useState<WorkspaceEntry | null>(null);
-  const [selectedThread, setSelectedThread] = useState<BridgeThread | null>(null);
+  const [selectedThread, setSelectedThreadState] = useState<BridgeThread | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
@@ -148,6 +148,10 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const preferencesRef = useRef<BridgePreferences>(DEFAULT_PREFERENCES);
+  const selectedThreadRef = useRef<BridgeThread | null>(null);
+  const threadContentRequestId = useRef(0);
+  const composingNewThreadRef = useRef(false);
   const activeAbortController = useRef<AbortController | null>(null);
   const activeRunId = useRef<string | null>(null);
   const activeRunThreadId = useRef<string | null>(null);
@@ -178,9 +182,25 @@ export function BridgeProvider({ children }: PropsWithChildren) {
 
   useEffect(() => tunnelManager.subscribe(setTunnelStatus), [tunnelManager]);
 
+  const setSelectedThread = useCallback((thread: BridgeThread | null) => {
+    selectedThreadRef.current = thread;
+    setSelectedThreadState(thread);
+  }, []);
+
+  const nextThreadContentRequest = useCallback(() => {
+    threadContentRequestId.current += 1;
+    return threadContentRequestId.current;
+  }, []);
+
+  const isCurrentThreadContentRequest = useCallback(
+    (requestId: number) => requestId === threadContentRequestId.current,
+    []
+  );
+
   const updatePreferences = useCallback((patch: Partial<BridgePreferences>) => {
     setPreferences((current) => {
       const next = { ...current, ...patch };
+      preferencesRef.current = next;
       void savePreferences(next);
       return next;
     });
@@ -199,48 +219,75 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   }, []);
 
   const loadThreadContent = useCallback(
-    async (thread: BridgeThread | null) => {
+    async (thread: BridgeThread | null, requestId = nextThreadContentRequest()) => {
       if (!thread) {
-        setIsLoadingThreadContent(false);
-        setMessages([]);
-        setActivities([]);
-        setPendingApprovals([]);
+        if (isCurrentThreadContentRequest(requestId)) {
+          setIsLoadingThreadContent(false);
+          setMessages([]);
+          setActivities([]);
+          setPendingApprovals([]);
+        }
         return null;
       }
 
-      setIsLoadingThreadContent(true);
+      if (isCurrentThreadContentRequest(requestId)) {
+        setIsLoadingThreadContent(true);
+      }
       try {
         const response = await client.getThread(thread.id, { includeTurns: true });
-        setSelectedThread(response.thread);
-        setMessages(messagesFromThread(response.thread));
+        if (isCurrentThreadContentRequest(requestId)) {
+          setSelectedThread(response.thread);
+          setMessages(messagesFromThread(response.thread));
+        }
         return response.thread;
       } catch {
-        setMessages(messagesFromThread(thread));
+        if (isCurrentThreadContentRequest(requestId)) {
+          setMessages(messagesFromThread(thread));
+        }
         return thread;
       } finally {
-        setIsLoadingThreadContent(false);
+        if (isCurrentThreadContentRequest(requestId)) {
+          setIsLoadingThreadContent(false);
+        }
       }
     },
-    [client]
+    [client, isCurrentThreadContentRequest, nextThreadContentRequest, setSelectedThread]
   );
 
   const loadThreadsForWorkspace = useCallback(
     async (workspacePath: string, preferredThreadId?: string | null) => {
+      const requestId = nextThreadContentRequest();
       const response = await client.listThreads({ cwd: workspacePath, limit: 30 });
+      if (!isCurrentThreadContentRequest(requestId)) {
+        return response.data;
+      }
+
       setThreads(response.data);
 
+      const requestedThreadId =
+        preferredThreadId === undefined ? preferencesRef.current.selectedThreadId : preferredThreadId;
+      const currentThreadId = selectedThreadRef.current?.id ?? null;
       const nextThread =
-        response.data.find((thread) => thread.id === preferredThreadId) ??
-        response.data.find((thread) => thread.id === selectedThread?.id) ??
-        response.data[0] ??
-        null;
+        composingNewThreadRef.current
+          ? null
+          : response.data.find((thread) => thread.id === requestedThreadId) ??
+            response.data.find((thread) => thread.id === currentThreadId) ??
+            response.data[0] ??
+            null;
 
       setSelectedThread(nextThread);
       updatePreferences({ selectedThreadId: nextThread?.id ?? null });
-      await loadThreadContent(nextThread);
+      await loadThreadContent(nextThread, requestId);
       return response.data;
     },
-    [client, loadThreadContent, selectedThread?.id, updatePreferences]
+    [
+      client,
+      isCurrentThreadContentRequest,
+      loadThreadContent,
+      nextThreadContentRequest,
+      setSelectedThread,
+      updatePreferences
+    ]
   );
 
   const refreshAccount = useCallback(async () => {
@@ -325,8 +372,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
           : accountResponse?.rateLimitsError ?? null
       );
 
+      const currentPreferences = preferencesRef.current;
       const workspace =
-        workspaceResponse?.data.find((entry) => entry.path === preferences.selectedWorkspacePath) ??
+        workspaceResponse?.data.find((entry) => entry.path === currentPreferences.selectedWorkspacePath) ??
         workspaceResponse?.data.find((entry) => entry.exists) ??
         workspaceResponse?.data[0] ??
         null;
@@ -334,7 +382,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setSelectedWorkspaceState(workspace);
       if (workspace) {
         updatePreferences({ selectedWorkspacePath: workspace.path });
-        await loadThreadsForWorkspace(workspace.path, preferences.selectedThreadId);
+        await loadThreadsForWorkspace(workspace.path, currentPreferences.selectedThreadId);
       } else {
         setThreads([]);
         setSelectedThread(null);
@@ -343,7 +391,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
 
       const configModel = readConfigString(configResponse, "model");
       const defaultModel = modelResponse?.data.find((model) => model.isDefault)?.id;
-      const modelId = preferences.selectedModelId ?? configModel ?? defaultModel ?? modelResponse?.data[0]?.id;
+      const modelId = currentPreferences.selectedModelId ?? configModel ?? defaultModel ?? modelResponse?.data[0]?.id;
       if (modelId) {
         updatePreferences({ selectedModelId: modelId });
       }
@@ -359,7 +407,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         const allBridgeCallsFailed = failures.length === 4;
         setError(
           allBridgeCallsFailed
-            ? `Bridge unavailable at ${preferences.baseUrl}. Start the backend or adjust the URL in Settings.`
+            ? `Bridge unavailable at ${currentPreferences.baseUrl}. Start the backend or adjust the URL in Settings.`
             : `Failed to load: ${failures.join(", ")}.`
         );
       }
@@ -372,9 +420,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   }, [
     client,
     loadThreadsForWorkspace,
-    preferences.selectedModelId,
-    preferences.selectedThreadId,
-    preferences.selectedWorkspacePath,
+    setSelectedThread,
     updatePreferences
   ]);
 
@@ -384,6 +430,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       if (!mounted) {
         return;
       }
+      preferencesRef.current = loaded;
       setPreferences(loaded);
       setIsBooting(false);
     });
@@ -434,6 +481,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
 
   const selectWorkspace = useCallback(
     async (workspace: WorkspaceEntry) => {
+      composingNewThreadRef.current = false;
+      nextThreadContentRequest();
       detachActiveStream();
       setSelectedWorkspaceState(workspace);
       setSelectedThread(null);
@@ -446,10 +495,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setActiveRuns(active.data);
       setIsRunning(active.data.length > 0);
     },
-    [client, detachActiveStream, loadThreadsForWorkspace, updatePreferences]
+    [client, detachActiveStream, loadThreadsForWorkspace, nextThreadContentRequest, setSelectedThread, updatePreferences]
   );
 
   const selectThread = useCallback(async (thread: BridgeThread) => {
+    composingNewThreadRef.current = false;
+    nextThreadContentRequest();
     detachActiveStream();
     setSelectedThread(thread);
     setMessages([]);
@@ -463,7 +514,15 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       ...current.filter((run) => run.thread_id !== thread.id)
     ]);
     setIsRunning(active.data.length > 0 || activeRuns.some((run) => run.thread_id !== thread.id));
-  }, [activeRuns, client, detachActiveStream, loadThreadContent, updatePreferences]);
+  }, [
+    activeRuns,
+    client,
+    detachActiveStream,
+    loadThreadContent,
+    nextThreadContentRequest,
+    setSelectedThread,
+    updatePreferences
+  ]);
 
   const renameThread = useCallback(
     async (thread: BridgeThread, title: string) => {
@@ -478,9 +537,11 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         setThreads((current) =>
           current.map((item) => (item.id === response.thread.id ? response.thread : item))
         );
-        setSelectedThread((current) =>
-          current?.id === response.thread.id ? response.thread : current
-        );
+        setSelectedThreadState((current) => {
+          const next = current?.id === response.thread.id ? response.thread : current;
+          selectedThreadRef.current = next;
+          return next;
+        });
         return response.thread;
       } catch (caught) {
         setError(errorMessage(caught));
@@ -502,11 +563,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
             setActivities([]);
             setPendingApprovals([]);
           }
-          setSelectedThread((current) => {
+          setSelectedThreadState((current) => {
             if (current?.id !== thread.id) {
               return current;
             }
             const next = threads.find((item) => item.id !== thread.id) ?? null;
+            selectedThreadRef.current = next;
             updatePreferences({ selectedThreadId: next?.id ?? null });
             return next;
           });
@@ -558,6 +620,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
           setAllowlistFile(workspaceResponse.allowlist_file);
 
           if (selectedWorkspace?.path === workspace.path) {
+            composingNewThreadRef.current = false;
+            nextThreadContentRequest();
             const next =
               workspaceResponse.data.find((entry) => entry.exists) ??
               workspaceResponse.data[0] ??
@@ -583,7 +647,14 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         return null;
       }
     },
-    [client, loadThreadsForWorkspace, selectedWorkspace?.path, updatePreferences]
+    [
+      client,
+      loadThreadsForWorkspace,
+      nextThreadContentRequest,
+      selectedWorkspace?.path,
+      setSelectedThread,
+      updatePreferences
+    ]
   );
 
   const restoreWorkspace = useCallback(
@@ -608,22 +679,57 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const createNewThread = useCallback(async () => {
     if (!selectedWorkspace) {
       setError("No repository selected.");
-      return null;
+      return;
     }
 
+    composingNewThreadRef.current = true;
+    nextThreadContentRequest();
+    detachActiveStream();
     setError(null);
-    const response = await client.createThread({
-      title: "New mobile conversation",
-      workspace: selectedWorkspace.path
-    });
-    setThreads((current) => [response.thread, ...current.filter((thread) => thread.id !== response.thread.id)]);
-    setSelectedThread(response.thread);
-    updatePreferences({ selectedThreadId: response.thread.id });
+    setSelectedThread(null);
+    updatePreferences({ selectedThreadId: null });
+    setIsLoadingThreadContent(false);
     setMessages([]);
     setActivities([]);
     setPendingApprovals([]);
-    return response.thread;
-  }, [client, selectedWorkspace, updatePreferences]);
+  }, [detachActiveStream, nextThreadContentRequest, selectedWorkspace, setSelectedThread, updatePreferences]);
+
+  const createPersistedThread = useCallback(async () => {
+    if (!selectedWorkspace) {
+      setError("No repository selected.");
+      return null;
+    }
+
+    const requestId = nextThreadContentRequest();
+    setError(null);
+
+    try {
+      const response = await client.createThread({
+        title: "New mobile conversation",
+        workspace: selectedWorkspace.path
+      });
+      if (!isCurrentThreadContentRequest(requestId)) {
+        return null;
+      }
+      composingNewThreadRef.current = false;
+      setThreads((current) => [response.thread, ...current.filter((thread) => thread.id !== response.thread.id)]);
+      setSelectedThread(response.thread);
+      updatePreferences({ selectedThreadId: response.thread.id });
+      return response.thread;
+    } catch (caught) {
+      if (isCurrentThreadContentRequest(requestId)) {
+        setError(errorMessage(caught));
+      }
+      return null;
+    }
+  }, [
+    client,
+    isCurrentThreadContentRequest,
+    nextThreadContentRequest,
+    selectedWorkspace,
+    setSelectedThread,
+    updatePreferences
+  ]);
 
   const sendMessage = useCallback(
     async (message: string) => {
@@ -634,7 +740,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
 
       setError(null);
       setPendingApprovals([]);
-      const thread = selectedThread ?? (await createNewThread());
+      const thread = selectedThreadRef.current ?? (await createPersistedThread());
       if (!thread) {
         return;
       }
@@ -703,7 +809,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     },
     [
       client,
-      createNewThread,
+      createPersistedThread,
       isRunning,
       loadThreadsForWorkspace,
       preferences.approvalPolicy,
@@ -712,7 +818,6 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       preferences.sandboxMode,
       preferences.selectedModelId,
       preferences.serviceTier,
-      selectedThread,
       selectedWorkspace
     ]
   );
