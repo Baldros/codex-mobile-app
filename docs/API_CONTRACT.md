@@ -72,6 +72,10 @@ Retorna metadados e ultimos eventos salvos da thread.
 
 ## Run Streaming
 
+O bridge trata a run como trabalho de backend. A conexao SSE e apenas uma assinatura
+temporaria dos eventos. Se o mobile trocar de tela, fechar ou perder rede, a run continua
+rodando no desktop ate concluir, falhar, pedir aprovacao ou receber cancelamento explicito.
+
 ```http
 POST /v1/threads/:threadId/runs/stream
 Content-Type: application/json
@@ -95,7 +99,51 @@ event: agent_message_delta
 data: {"thread_id":"thr_123","run_id":"run_123","text":"Vou verificar os testes."}
 
 event: done
-data: {"thread_id":"thr_123","run_id":"run_123","status":"completed"}
+data: {"thread_id":"thr_123","run_id":"run_123","status":"completed","event_seq":3}
+```
+
+Cada evento de run inclui `event_seq`. O mobile pode usar esse valor para reabrir o stream
+sem repetir eventos ja processados.
+
+## Run Background
+
+Para iniciar sem manter o SSE aberto:
+
+```http
+POST /v1/threads/:threadId/runs
+Content-Type: application/json
+
+{
+  "message": "Rode os testes e corrija a falha",
+  "cwd": "E:\\codex-mobile-app"
+}
+```
+
+Resposta:
+
+```json
+{
+  "run": {
+    "run_id": "run_123",
+    "thread_id": "thr_123",
+    "cwd": "E:\\codex-mobile-app",
+    "status": "running",
+    "last_event_seq": 1
+  }
+}
+```
+
+Runs ativas:
+
+```http
+GET /v1/runs/active?thread_id=thr_123&cwd=E%3A%5Ccodex-mobile-app
+```
+
+Reabrir o stream de uma run:
+
+```http
+GET /v1/runs/:runId/events/stream?since_seq=12
+Accept: text/event-stream
 ```
 
 ## Cancelamento
@@ -109,7 +157,9 @@ Content-Type: application/json
 }
 ```
 
-O bridge deve tambem cancelar a run se o cliente desconectar do SSE.
+Desconectar do SSE nao cancela a run. O cancelamento real exige chamada explicita para
+essa rota. Isso preserva execucoes quando o usuario troca de conversa, troca de projeto,
+fecha o app ou perde conexao temporariamente.
 
 ## Workspaces
 
@@ -269,7 +319,7 @@ data: <json-compacto>
 ## Regras do Bridge
 
 - Enviar heartbeat a cada 15 a 30 segundos durante runs longas.
-- Encerrar a run se o cliente desconectar e nao houver modo background habilitado.
+- Manter a run ativa se o cliente desconectar; cancelar somente por pedido explicito.
 - Normalizar erros em JSON.
 - Nunca vazar secrets nos eventos.
 - Validar `cwd` contra uma allowlist configuravel.

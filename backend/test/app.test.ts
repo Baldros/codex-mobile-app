@@ -242,6 +242,72 @@ describe("Codex bridge cancellation", () => {
       data: { status: "cancelled" }
     });
   });
+
+  it("keeps a run alive after the SSE client disconnects", async () => {
+    const created = await createThread(baseUrl, { workspace: process.cwd() });
+    const streamResponse = await fetch(`${baseUrl}/v1/threads/${created.thread.id}/runs/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "keep running after disconnect" })
+    });
+
+    expect(streamResponse.body).not.toBeNull();
+    const reader = streamResponse.body!.getReader();
+    const firstChunk = await readUntil(reader, "event: run_started");
+    const runStarted = parseSse(firstChunk).find((event) => event.event === "run_started");
+    expect(runStarted).toBeDefined();
+    await reader.cancel();
+
+    await delay(350);
+
+    const replayResponse = await fetch(
+      `${baseUrl}/v1/runs/${encodeURIComponent(String(runStarted!.data.run_id))}/events/stream?since_seq=0`
+    );
+    const replayEvents = parseSse(await replayResponse.text());
+
+    expect(replayResponse.status).toBe(200);
+    expect(replayEvents.at(-1)).toMatchObject({
+      event: "done",
+      data: { status: "completed" }
+    });
+  });
+
+  it("lists and cancels a detached active run", async () => {
+    const created = await createThread(baseUrl, { workspace: process.cwd() });
+    const streamResponse = await fetch(`${baseUrl}/v1/threads/${created.thread.id}/runs/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "cancel detached run" })
+    });
+
+    expect(streamResponse.body).not.toBeNull();
+    const reader = streamResponse.body!.getReader();
+    const firstChunk = await readUntil(reader, "event: run_started");
+    const runStarted = parseSse(firstChunk).find((event) => event.event === "run_started");
+    expect(runStarted).toBeDefined();
+    await reader.cancel();
+
+    const activeResponse = await fetch(`${baseUrl}/v1/runs/active?thread_id=${created.thread.id}`);
+    const activeBody = (await activeResponse.json()) as { data: Array<{ run_id: string }> };
+    expect(activeResponse.status).toBe(200);
+    expect(activeBody.data.map((run) => run.run_id)).toContain(runStarted!.data.run_id);
+
+    const cancelResponse = await fetch(`${baseUrl}/v1/threads/${created.thread.id}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ run_id: runStarted!.data.run_id })
+    });
+    expect(cancelResponse.status).toBe(200);
+
+    const replayResponse = await fetch(
+      `${baseUrl}/v1/runs/${encodeURIComponent(String(runStarted!.data.run_id))}/events/stream?since_seq=0`
+    );
+    const replayEvents = parseSse(await replayResponse.text());
+    expect(replayEvents.at(-1)).toMatchObject({
+      event: "done",
+      data: { status: "cancelled" }
+    });
+  });
 });
 
 class CapturingMockCodexRuntime extends MockCodexRuntime {
@@ -352,4 +418,8 @@ async function readRest(reader: ReadableStreamDefaultReader<Uint8Array>) {
   }
 
   return text;
+}
+
+async function delay(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }

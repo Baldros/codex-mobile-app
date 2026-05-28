@@ -44,6 +44,17 @@ export type BridgeThread = {
   turns?: unknown[];
 };
 
+export type BridgeRunSummary = {
+  run_id: string;
+  thread_id: string;
+  cwd?: string;
+  status: "starting" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | string;
+  created_at: string;
+  updated_at: string;
+  last_event_seq: number;
+  error?: string | null;
+};
+
 export type ThreadArchiveResponse = {
   supported: boolean;
   archived: boolean;
@@ -186,6 +197,7 @@ export type WorkspaceMutationResponse = {
 export type BridgePreferences = {
   baseUrl: string;
   selectedWorkspacePath: string | null;
+  selectedThreadId: string | null;
   selectedModelId: string | null;
   reasoningEffort: ReasoningEffort;
   approvalPolicy: ApprovalPolicy;

@@ -1,7 +1,8 @@
 import { SseStreamDecoder } from "./sse";
 import type {
-  BridgeHealth,
   BridgeCapabilities,
+  BridgeHealth,
+  BridgeRunSummary,
   BridgeSseEvent,
   BridgeThread,
   CodexAccountResponse,
@@ -87,6 +88,17 @@ export class BridgeClient {
     });
   }
 
+  async getThread(threadId: string, options: { includeTurns?: boolean } = {}) {
+    const query = new URLSearchParams();
+    if (options.includeTurns) {
+      query.set("include_turns", "true");
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return this.requestJson<{ thread: BridgeThread }>(
+      `/v1/threads/${encodeURIComponent(threadId)}${suffix}`
+    );
+  }
+
   async renameThread(threadId: string, title: string) {
     return this.requestJson<{ thread: BridgeThread }>(
       `/v1/threads/${encodeURIComponent(threadId)}/name`,
@@ -152,14 +164,24 @@ export class BridgeClient {
     );
   }
 
+  async listActiveRuns(params: { threadId?: string; cwd?: string } = {}) {
+    const query = new URLSearchParams();
+    if (params.threadId) {
+      query.set("thread_id", params.threadId);
+    }
+    if (params.cwd) {
+      query.set("cwd", params.cwd);
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return this.requestJson<ListResponse<BridgeRunSummary>>(`/v1/runs/active${suffix}`);
+  }
+
   async streamRun(
     threadId: string,
     body: RunStreamBody,
     onEvent: (event: BridgeSseEvent) => void,
     signal?: AbortSignal
   ) {
-    await this.options.ensureTransportReady?.();
-
     const init: RequestInit = {
       method: "POST",
       headers: {
@@ -172,10 +194,68 @@ export class BridgeClient {
       init.signal = signal;
     }
 
-    const response = await fetch(
-      this.url(`/v1/threads/${encodeURIComponent(threadId)}/runs/stream`),
-      init
+    await this.readSseStream(
+      `/v1/threads/${encodeURIComponent(threadId)}/runs/stream`,
+      init,
+      onEvent
     );
+  }
+
+  async streamRunEvents(
+    runId: string,
+    onEvent: (event: BridgeSseEvent) => void,
+    signal?: AbortSignal,
+    sinceSeq = 0
+  ) {
+    const init: RequestInit = {
+      method: "GET",
+      headers: {
+        Accept: "text/event-stream"
+      }
+    };
+    if (signal) {
+      init.signal = signal;
+    }
+
+    await this.readSseStream(
+      `/v1/runs/${encodeURIComponent(runId)}/events/stream?since_seq=${sinceSeq}`,
+      init,
+      onEvent
+    );
+  }
+
+  private async requestJson<T>(path: string, init: RequestInit = {}) {
+    await this.options.ensureTransportReady?.();
+
+    const response = await fetch(this.url(path), {
+      ...init,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        ...(init.headers ?? {})
+      }
+    });
+
+    if (!response.ok) {
+      throw await toBridgeError(response);
+    }
+
+    return (await response.json()) as T;
+  }
+
+  private url(path: string) {
+    const normalizedBase = this.baseUrl.replace(/\/+$/, "");
+    return `${normalizedBase}${path.startsWith("/") ? path : `/${path}`}`;
+  }
+
+  private async readSseStream(
+    path: string,
+    init: RequestInit,
+    onEvent: (event: BridgeSseEvent) => void
+  ) {
+    await this.options.ensureTransportReady?.();
+
+    const response = await fetch(this.url(path), init);
 
     if (!response.ok) {
       throw await toBridgeError(response);
@@ -205,30 +285,6 @@ export class BridgeClient {
         onEvent(event);
       }
     }
-  }
-
-  private async requestJson<T>(path: string, init: RequestInit = {}) {
-    await this.options.ensureTransportReady?.();
-
-    const response = await fetch(this.url(path), {
-      ...init,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...(init.headers ?? {})
-      }
-    });
-
-    if (!response.ok) {
-      throw await toBridgeError(response);
-    }
-
-    return (await response.json()) as T;
-  }
-
-  private url(path: string) {
-    const normalizedBase = this.baseUrl.replace(/\/+$/, "");
-    return `${normalizedBase}${path.startsWith("/") ? path : `/${path}`}`;
   }
 }
 

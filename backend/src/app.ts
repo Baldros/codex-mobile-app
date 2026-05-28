@@ -7,11 +7,11 @@ import { getBridgeConfig, type BridgeConfig } from "./config.js";
 import { AppError, getErrorPayload } from "./errors.js";
 import { createRuntime } from "./runtime/createRuntime.js";
 import type { CodexRuntimeHealth } from "./runtime/types.js";
+import { RunRegistry } from "./runs/RunRegistry.js";
 import { SseWriter } from "./sse.js";
 import { InMemoryThreadStore } from "./threads/InMemoryThreadStore.js";
 import { ThreadService } from "./threads/ThreadService.js";
 import { WorkspaceService } from "./workspaces/WorkspaceService.js";
-import type { RunStreamBody } from "./validation.js";
 import {
   ArchiveThreadBodySchema,
   ApprovalResponseBodySchema,
@@ -26,6 +26,7 @@ import {
 export type AppDependencies = {
   config?: BridgeConfig;
   threadService?: BridgeThreadService;
+  runRegistry?: RunRegistry;
   workspaceService?: WorkspaceService;
   appServerClient?: AppServerClient;
 };
@@ -36,12 +37,13 @@ export function createApp(deps: AppDependencies = {}) {
   const threadService =
     deps.threadService ??
     createDefaultThreadService(config, workspaceService, deps.appServerClient);
+  const runRegistry = deps.runRegistry ?? new RunRegistry(threadService);
 
   return async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     applyCorsHeaders(res);
 
     try {
-      await routeRequest(req, res, config, threadService, workspaceService);
+      await routeRequest(req, res, config, threadService, runRegistry, workspaceService);
     } catch (error) {
       sendError(res, error);
     }
@@ -57,6 +59,7 @@ async function routeRequest(
   res: ServerResponse,
   config: BridgeConfig,
   threadService: BridgeThreadService,
+  runRegistry: RunRegistry,
   workspaceService: WorkspaceService
 ) {
   const method = req.method ?? "GET";
@@ -132,7 +135,40 @@ async function routeRequest(
   if (method === "POST" && runStreamMatch) {
     const threadId = decodeURIComponent(runStreamMatch[1]!);
     const body = RunStreamBodySchema.parse(await readJson(req));
-    await streamRun(req, res, threadService, threadId, body, config.heartbeatMs);
+    const run = await runRegistry.startRun(threadId, body);
+    if (res.destroyed) {
+      return;
+    }
+    await streamRunEvents(req, res, runRegistry, run.run_id, 0, config.heartbeatMs);
+    return;
+  }
+
+  const runStartMatch = pathname.match(/^\/v1\/threads\/([^/]+)\/runs$/);
+  if (method === "POST" && runStartMatch) {
+    const threadId = decodeURIComponent(runStartMatch[1]!);
+    const body = RunStreamBodySchema.parse(await readJson(req));
+    sendJson(res, 202, { run: await runRegistry.startRun(threadId, body) });
+    return;
+  }
+
+  if (method === "GET" && pathname === "/v1/runs/active") {
+    const threadId = url.searchParams.get("thread_id");
+    const cwd = url.searchParams.get("cwd");
+    sendJson(res, 200, { data: runRegistry.listActiveRuns({ threadId, cwd }) });
+    return;
+  }
+
+  const runEventsMatch = pathname.match(/^\/v1\/runs\/([^/]+)\/events\/stream$/);
+  if (method === "GET" && runEventsMatch) {
+    const runId = decodeURIComponent(runEventsMatch[1]!);
+    const sinceSeq = parseNonNegativeInt(url.searchParams.get("since_seq")) ?? 0;
+    await streamRunEvents(req, res, runRegistry, runId, sinceSeq, config.heartbeatMs);
+    return;
+  }
+
+  const runMatch = pathname.match(/^\/v1\/runs\/([^/]+)$/);
+  if (method === "GET" && runMatch) {
+    sendJson(res, 200, { run: runRegistry.getRun(decodeURIComponent(runMatch[1]!)) });
     return;
   }
 
@@ -140,7 +176,7 @@ async function routeRequest(
   if (method === "POST" && cancelMatch) {
     const threadId = decodeURIComponent(cancelMatch[1]!);
     const body = CancelRunBodySchema.parse(await readJson(req));
-    const result = (await threadService.cancelRun(threadId, body.run_id)) as { cancelled?: boolean };
+    const result = runRegistry.cancelRun(threadId, body.run_id);
     sendJson(res, result.cancelled ? 200 : 404, result);
     return;
   }
@@ -275,38 +311,44 @@ function buildCapabilitiesResponse(
   };
 }
 
-async function streamRun(
+async function streamRunEvents(
   req: IncomingMessage,
   res: ServerResponse,
-  threadService: BridgeThreadService,
-  threadId: string,
-  body: RunStreamBody,
+  runRegistry: RunRegistry,
+  runId: string,
+  sinceSeq: number,
   heartbeatMs: number
 ) {
-  const abortController = new AbortController();
   const sse = new SseWriter(res);
-  let completed = false;
-
-  req.on("close", () => {
-    if (!completed) {
-      abortController.abort();
-    }
-  });
+  const subscription = runRegistry.subscribe(runId, sinceSeq);
+  let clientClosed = false;
 
   sse.open();
+  req.on("close", () => {
+    clientClosed = true;
+    subscription.close();
+  });
+
   const heartbeat = setInterval(() => {
-    sse.write("heartbeat", { ts: new Date().toISOString() });
+    if (!clientClosed) {
+      sse.write("heartbeat", { ts: new Date().toISOString(), run_id: runId });
+    }
   }, heartbeatMs);
   heartbeat.unref();
 
   try {
-    for await (const event of threadService.runThread(threadId, body, abortController.signal)) {
+    for await (const event of subscription.events) {
+      if (clientClosed) {
+        break;
+      }
       sse.write(event.event, event.data);
     }
-    completed = true;
   } finally {
     clearInterval(heartbeat);
-    sse.end();
+    subscription.close();
+    if (!res.writableEnded && !res.destroyed) {
+      sse.end();
+    }
   }
 }
 
@@ -356,6 +398,15 @@ function parsePositiveInt(value: string | null) {
 
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseNonNegativeInt(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function parseOptionalBoolean(value: string | null) {

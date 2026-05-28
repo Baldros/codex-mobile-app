@@ -119,6 +119,11 @@ O bridge entrega eventos por SSE. Isso simplifica o cliente mobile e cobre:
 - heartbeats;
 - conclusao.
 
+Runs do Codex pertencem ao backend local, nao a conexao mobile. O SSE e uma assinatura
+temporaria sobre uma run em memoria do Bridge; desconectar o cliente apenas remove essa
+assinatura. A run continua ate terminar, falhar, pedir aprovacao ou receber cancelamento
+explicito.
+
 ### Historico nativo do Codex
 
 O Bridge nao deve criar persistencia propria para conversas. O historico permanente vem do proprio Codex, em `~/.codex/sessions`, via `codex app-server`.

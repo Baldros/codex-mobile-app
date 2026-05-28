@@ -22,6 +22,7 @@ import type {
   BridgeCapabilities,
   BridgeHealth,
   BridgePreferences,
+  BridgeRunSummary,
   BridgeSseEvent,
   BridgeThread,
   CodexAccountResponse,
@@ -63,6 +64,8 @@ type BridgeContextValue = {
   messages: ChatMessage[];
   activities: ActivityItem[];
   pendingApprovals: PendingApproval[];
+  activeRuns: BridgeRunSummary[];
+  runningThreadId: string | null;
   isBooting: boolean;
   isRefreshing: boolean;
   isRefreshingAccount: boolean;
@@ -94,7 +97,7 @@ type BridgeContextValue = {
   refreshWorkspaces: () => Promise<void>;
   refreshThreads: () => Promise<void>;
   selectWorkspace: (workspace: WorkspaceEntry) => Promise<void>;
-  selectThread: (thread: BridgeThread) => void;
+  selectThread: (thread: BridgeThread) => Promise<void>;
   renameThread: (thread: BridgeThread, title: string) => Promise<BridgeThread | null>;
   archiveThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
   restoreThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
@@ -135,6 +138,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
+  const [activeRuns, setActiveRuns] = useState<BridgeRunSummary[]>([]);
   const [isBooting, setIsBooting] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingAccount, setIsRefreshingAccount] = useState(false);
@@ -143,6 +147,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [accountError, setAccountError] = useState<string | null>(null);
   const activeAbortController = useRef<AbortController | null>(null);
   const activeRunId = useRef<string | null>(null);
+  const activeRunThreadId = useRef<string | null>(null);
+  const attachedRunId = useRef<string | null>(null);
+  const detachedAbortControllers = useRef(new Set<AbortController>());
   const buildConfig = useMemo(() => getCodexMobileBuildConfig(), []);
   const tunnelConfigIssue = useMemo(
     () => validateSshTunnelBuildConfig(buildConfig),
@@ -176,19 +183,57 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     });
   }, []);
 
+  const detachActiveStream = useCallback(() => {
+    const controller = activeAbortController.current;
+    if (!controller) {
+      return;
+    }
+
+    detachedAbortControllers.current.add(controller);
+    controller.abort();
+    activeAbortController.current = null;
+    attachedRunId.current = null;
+  }, []);
+
+  const loadThreadContent = useCallback(
+    async (thread: BridgeThread | null) => {
+      if (!thread) {
+        setMessages([]);
+        setActivities([]);
+        setPendingApprovals([]);
+        return null;
+      }
+
+      try {
+        const response = await client.getThread(thread.id, { includeTurns: true });
+        setSelectedThread(response.thread);
+        setMessages(messagesFromThread(response.thread));
+        return response.thread;
+      } catch {
+        setMessages(messagesFromThread(thread));
+        return thread;
+      }
+    },
+    [client]
+  );
+
   const loadThreadsForWorkspace = useCallback(
-    async (workspacePath: string) => {
+    async (workspacePath: string, preferredThreadId?: string | null) => {
       const response = await client.listThreads({ cwd: workspacePath, limit: 30 });
       setThreads(response.data);
 
-      setSelectedThread((current) => {
-        if (current && response.data.some((thread) => thread.id === current.id)) {
-          return current;
-        }
-        return response.data[0] ?? null;
-      });
+      const nextThread =
+        response.data.find((thread) => thread.id === preferredThreadId) ??
+        response.data.find((thread) => thread.id === selectedThread?.id) ??
+        response.data[0] ??
+        null;
+
+      setSelectedThread(nextThread);
+      updatePreferences({ selectedThreadId: nextThread?.id ?? null });
+      await loadThreadContent(nextThread);
+      return response.data;
     },
-    [client]
+    [client, loadThreadContent, selectedThread?.id, updatePreferences]
   );
 
   const refreshAccount = useCallback(async () => {
@@ -218,14 +263,16 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         modelResult,
         configResult,
         accountResult,
-        capabilitiesResult
+        capabilitiesResult,
+        activeRunsResult
       ] = await Promise.allSettled([
         client.health(),
         client.listWorkspaces(),
         client.listModels(),
         client.readConfig(),
         client.readAccount(),
-        client.capabilities()
+        client.capabilities(),
+        client.listActiveRuns()
       ]);
 
       if (healthResult.status === "fulfilled") {
@@ -258,6 +305,13 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setCapabilities(
         capabilitiesResult.status === "fulfilled" ? capabilitiesResult.value : DEFAULT_CAPABILITIES
       );
+      if (activeRunsResult.status === "fulfilled") {
+        setActiveRuns(activeRunsResult.value.data);
+        setIsRunning(activeRunsResult.value.data.length > 0);
+      } else {
+        setActiveRuns([]);
+        setIsRunning(false);
+      }
       setAccountError(
         accountResult.status === "rejected"
           ? errorMessage(accountResult.reason)
@@ -273,10 +327,11 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setSelectedWorkspaceState(workspace);
       if (workspace) {
         updatePreferences({ selectedWorkspacePath: workspace.path });
-        await loadThreadsForWorkspace(workspace.path);
+        await loadThreadsForWorkspace(workspace.path, preferences.selectedThreadId);
       } else {
         setThreads([]);
         setSelectedThread(null);
+        setMessages([]);
       }
 
       const configModel = readConfigString(configResponse, "model");
@@ -307,7 +362,14 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setIsRefreshing(false);
       setIsBooting(false);
     }
-  }, [client, loadThreadsForWorkspace, preferences.selectedModelId, preferences.selectedWorkspacePath, updatePreferences]);
+  }, [
+    client,
+    loadThreadsForWorkspace,
+    preferences.selectedModelId,
+    preferences.selectedThreadId,
+    preferences.selectedWorkspacePath,
+    updatePreferences
+  ]);
 
   useEffect(() => {
     let mounted = true;
@@ -352,33 +414,49 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setIsRefreshing(true);
     setError(null);
     try {
-      await loadThreadsForWorkspace(selectedWorkspace.path);
+      await loadThreadsForWorkspace(selectedWorkspace.path, selectedThread?.id);
+      const active = await client.listActiveRuns();
+      setActiveRuns(active.data);
+      setIsRunning(active.data.length > 0);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setIsRefreshing(false);
     }
-  }, [loadThreadsForWorkspace, selectedWorkspace]);
+  }, [client, loadThreadsForWorkspace, selectedThread?.id, selectedWorkspace]);
 
   const selectWorkspace = useCallback(
     async (workspace: WorkspaceEntry) => {
+      detachActiveStream();
       setSelectedWorkspaceState(workspace);
       setSelectedThread(null);
       setMessages([]);
       setActivities([]);
       setPendingApprovals([]);
-      updatePreferences({ selectedWorkspacePath: workspace.path });
-      await loadThreadsForWorkspace(workspace.path);
+      updatePreferences({ selectedWorkspacePath: workspace.path, selectedThreadId: null });
+      await loadThreadsForWorkspace(workspace.path, null);
+      const active = await client.listActiveRuns();
+      setActiveRuns(active.data);
+      setIsRunning(active.data.length > 0);
     },
-    [loadThreadsForWorkspace, updatePreferences]
+    [client, detachActiveStream, loadThreadsForWorkspace, updatePreferences]
   );
 
-  const selectThread = useCallback((thread: BridgeThread) => {
+  const selectThread = useCallback(async (thread: BridgeThread) => {
+    detachActiveStream();
     setSelectedThread(thread);
     setMessages([]);
     setActivities([]);
     setPendingApprovals([]);
-  }, []);
+    updatePreferences({ selectedThreadId: thread.id });
+    await loadThreadContent(thread);
+    const active = await client.listActiveRuns({ threadId: thread.id });
+    setActiveRuns((current) => [
+      ...active.data,
+      ...current.filter((run) => run.thread_id !== thread.id)
+    ]);
+    setIsRunning(active.data.length > 0 || activeRuns.some((run) => run.thread_id !== thread.id));
+  }, [activeRuns, client, detachActiveStream, loadThreadContent, updatePreferences]);
 
   const renameThread = useCallback(
     async (thread: BridgeThread, title: string) => {
@@ -421,7 +499,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
             if (current?.id !== thread.id) {
               return current;
             }
-            return threads.find((item) => item.id !== thread.id) ?? null;
+            const next = threads.find((item) => item.id !== thread.id) ?? null;
+            updatePreferences({ selectedThreadId: next?.id ?? null });
+            return next;
           });
         } else if (response.reason) {
           setError(response.reason);
@@ -432,7 +512,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         return null;
       }
     },
-    [client, selectedThread?.id, threads]
+    [client, selectedThread?.id, threads, updatePreferences]
   );
 
   const restoreThread = useCallback(
@@ -476,12 +556,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
               workspaceResponse.data[0] ??
               null;
             setSelectedWorkspaceState(next);
-            updatePreferences({ selectedWorkspacePath: next?.path ?? null });
+            updatePreferences({ selectedWorkspacePath: next?.path ?? null, selectedThreadId: null });
             setMessages([]);
             setActivities([]);
             setPendingApprovals([]);
             if (next) {
-              await loadThreadsForWorkspace(next.path);
+              await loadThreadsForWorkspace(next.path, null);
             } else {
               setThreads([]);
               setSelectedThread(null);
@@ -531,11 +611,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     });
     setThreads((current) => [response.thread, ...current.filter((thread) => thread.id !== response.thread.id)]);
     setSelectedThread(response.thread);
+    updatePreferences({ selectedThreadId: response.thread.id });
     setMessages([]);
     setActivities([]);
     setPendingApprovals([]);
     return response.thread;
-  }, [client, selectedWorkspace]);
+  }, [client, selectedWorkspace, updatePreferences]);
 
   const sendMessage = useCallback(
     async (message: string) => {
@@ -567,6 +648,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setMessages((current) => [...current, userMessage, assistantMessage]);
       setIsRunning(true);
       activeRunId.current = null;
+      activeRunThreadId.current = thread.id;
       const abortController = new AbortController();
       activeAbortController.current = abortController;
 
@@ -594,16 +676,21 @@ export function BridgeProvider({ children }: PropsWithChildren) {
           (event) => handleRunEvent(event, assistantMessageId),
           abortController.signal
         );
-        await loadThreadsForWorkspace(selectedWorkspace.path);
+        await loadThreadsForWorkspace(selectedWorkspace.path, thread.id);
       } catch (caught) {
         if (!abortController.signal.aborted) {
           setError(errorMessage(caught));
           markAssistantFailed(assistantMessageId, errorMessage(caught));
         }
       } finally {
-        setIsRunning(false);
-        activeAbortController.current = null;
-        activeRunId.current = null;
+        const detached = detachedAbortControllers.current.delete(abortController);
+        if (!detached) {
+          setIsRunning(false);
+          activeAbortController.current = null;
+          activeRunId.current = null;
+          activeRunThreadId.current = null;
+          attachedRunId.current = null;
+        }
       }
     },
     [
@@ -626,9 +713,26 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     const data = event.data as Record<string, unknown>;
 
     if (event.event === "run_started") {
-      activeRunId.current = asString(data.run_id);
+      const runId = asString(data.run_id);
+      const threadId = asString(data.thread_id) ?? activeRunThreadId.current;
+      activeRunId.current = runId;
+      activeRunThreadId.current = threadId;
+      if (runId && threadId) {
+        setActiveRuns((current) => [
+          {
+            run_id: runId,
+            thread_id: threadId,
+            status: "running",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            last_event_seq: asNumber(data.event_seq) ?? 0
+          },
+          ...current.filter((run) => run.run_id !== runId)
+        ]);
+      }
+      setIsRunning(true);
       addOrUpdateActivity({
-        id: asString(data.run_id) ?? createId("run"),
+        id: runId ?? createId("run"),
         title: "Run started",
         status: "running"
       });
@@ -730,17 +834,82 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     }
 
     if (event.event === "done") {
+      const runId = asString(data.run_id) ?? activeRunId.current;
       setMessages((current) =>
         current.map((item) => (item.id === assistantMessageId ? { ...item, pending: false } : item))
       );
+      if (runId) {
+        setActiveRuns((current) => current.filter((run) => run.run_id !== runId));
+      }
+      setIsRunning(false);
+      activeRunId.current = null;
+      activeRunThreadId.current = null;
+      attachedRunId.current = null;
       addOrUpdateActivity({
-        id: asString(data.run_id) ?? activeRunId.current ?? createId("done"),
+        id: runId ?? createId("done"),
         title: "Run finished",
         detail: asString(data.status) ?? "completed",
         status: asString(data.status) === "failed" ? "failed" : "done"
       });
     }
   }, []);
+
+  useEffect(() => {
+    const run = activeRuns.find(
+      (item) => item.thread_id === selectedThread?.id && isActiveRunStatus(item.status)
+    );
+    if (!run || attachedRunId.current === run.run_id) {
+      return;
+    }
+
+    const assistantMessageId = `assistant_${run.run_id}`;
+    setMessages((current) =>
+      current.some((item) => item.id === assistantMessageId)
+        ? current
+        : [...current, { id: assistantMessageId, role: "assistant", text: "", pending: true }]
+    );
+
+    const abortController = new AbortController();
+    activeAbortController.current = abortController;
+    activeRunId.current = run.run_id;
+    activeRunThreadId.current = run.thread_id;
+    attachedRunId.current = run.run_id;
+    setIsRunning(true);
+
+    void client
+      .streamRunEvents(
+        run.run_id,
+        (event) => handleRunEvent(event, assistantMessageId),
+        abortController.signal,
+        0
+      )
+      .catch((caught) => {
+        if (!abortController.signal.aborted) {
+          setError(errorMessage(caught));
+          markAssistantFailed(assistantMessageId, errorMessage(caught));
+        }
+      })
+      .finally(() => {
+        const detached = detachedAbortControllers.current.delete(abortController);
+        if (!detached && activeRunId.current === run.run_id) {
+          activeAbortController.current = null;
+          activeRunId.current = null;
+          activeRunThreadId.current = null;
+          attachedRunId.current = null;
+        }
+      });
+
+    return () => {
+      detachedAbortControllers.current.add(abortController);
+      abortController.abort();
+      if (activeAbortController.current === abortController) {
+        activeAbortController.current = null;
+      }
+      if (attachedRunId.current === run.run_id) {
+        attachedRunId.current = null;
+      }
+    };
+  }, [activeRuns, client, handleRunEvent, selectedThread?.id]);
 
   const addOrUpdateActivity = useCallback((activity: ActivityItem) => {
     setActivities((current) => {
@@ -766,12 +935,25 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   }, []);
 
   const cancelRun = useCallback(async () => {
+    const selectedRun =
+      activeRuns.find((run) => run.thread_id === selectedThread?.id) ??
+      activeRuns[0] ??
+      null;
+    const threadId = selectedRun?.thread_id ?? activeRunThreadId.current ?? selectedThread?.id;
+    const runId = selectedRun?.run_id ?? activeRunId.current;
+
     activeAbortController.current?.abort();
-    if (selectedThread && activeRunId.current) {
-      await client.cancelRun(selectedThread.id, activeRunId.current).catch(() => null);
+    if (threadId && runId) {
+      await client.cancelRun(threadId, runId).catch(() => null);
+    }
+    if (runId) {
+      setActiveRuns((current) => current.filter((run) => run.run_id !== runId));
     }
     setIsRunning(false);
-  }, [client, selectedThread]);
+    activeRunId.current = null;
+    activeRunThreadId.current = null;
+    attachedRunId.current = null;
+  }, [activeRuns, client, selectedThread?.id]);
 
   const respondApproval = useCallback(
     async (approval: PendingApproval, decision: string) => {
@@ -838,6 +1020,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       messages,
       activities,
       pendingApprovals,
+      activeRuns,
+      runningThreadId: activeRuns[0]?.thread_id ?? activeRunThreadId.current,
       isBooting,
       isRefreshing,
       isRefreshingAccount,
@@ -871,6 +1055,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     }),
     [
       activities,
+      activeRuns,
       allowlistFile,
       account,
       accountError,
@@ -939,6 +1124,124 @@ function normalizeUrl(value: string) {
 
 function asString(value: unknown) {
   return typeof value === "string" ? value : null;
+}
+
+function asNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function isActiveRunStatus(status: string) {
+  return status === "starting" || status === "running" || status === "waiting_approval";
+}
+
+function messagesFromThread(thread: BridgeThread) {
+  const turns = Array.isArray(thread.turns) ? thread.turns : [];
+  const messages: ChatMessage[] = [];
+
+  for (const turn of turns) {
+    const record = asRecord(turn);
+    if (!record) {
+      continue;
+    }
+
+    for (const text of textEntries(record.input ?? record.userInput ?? record.prompt)) {
+      messages.push({
+        id: createId("history_user"),
+        role: "user",
+        text
+      });
+    }
+
+    const items = arrayValue(record.items ?? record.output ?? record.responses);
+    for (const item of items) {
+      const itemRecord = asRecord(item);
+      if (!itemRecord) {
+        continue;
+      }
+
+      const role = asString(itemRecord.role);
+      const type = asString(itemRecord.type);
+      const text = firstText(itemRecord.text, itemRecord.content, itemRecord.message);
+      if (!text) {
+        continue;
+      }
+
+      if (role === "user" || type === "userMessage") {
+        messages.push({ id: createId("history_user"), role: "user", text });
+      } else if (role === "assistant" || type === "agentMessage" || type === "assistantMessage") {
+        messages.push({ id: createId("history_assistant"), role: "assistant", text });
+      }
+    }
+
+    const assistantText = firstText(
+      record.assistantMessage,
+      record.response,
+      record.outputText,
+      record.finalMessage
+    );
+    if (assistantText) {
+      messages.push({
+        id: createId("history_assistant"),
+        role: "assistant",
+        text: assistantText
+      });
+    }
+  }
+
+  return messages;
+}
+
+function textEntries(value: unknown): string[] {
+  if (typeof value === "string") {
+    return value.trim() ? [value] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      const direct = firstText(item);
+      return direct ? [direct] : [];
+    });
+  }
+
+  const text = firstText(value);
+  return text ? [text] : [];
+}
+
+function firstText(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+
+    if (Array.isArray(value)) {
+      const nested = firstText(...value);
+      if (nested) {
+        return nested;
+      }
+    }
+
+    const record = asRecord(value);
+    if (!record) {
+      continue;
+    }
+
+    for (const key of ["text", "content", "value"]) {
+      const nested = record[key];
+      if (typeof nested === "string" && nested.trim()) {
+        return nested;
+      }
+    }
+  }
+
+  return null;
+}
+
+function arrayValue(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 function toolTitle(data: Record<string, unknown>) {

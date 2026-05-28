@@ -150,8 +150,7 @@ function ConversationRow({
     <View style={[styles.row, active && styles.rowActive]}>
       <Pressable
         onPress={() => {
-          bridge.selectThread(thread);
-          router.back();
+          void bridge.selectThread(thread).then(() => router.back());
         }}
         style={({ pressed }) => [styles.rowBody, pressed && styles.rowPressed]}
       >
