@@ -27,6 +27,7 @@ import type {
   BridgeThread,
   CodexAccountResponse,
   ChatMessage,
+  ChatMessagePart,
   CodexConfigResponse,
   CodexModel,
   PendingApproval,
@@ -69,6 +70,7 @@ type BridgeContextValue = {
   isBooting: boolean;
   isRefreshing: boolean;
   isRefreshingAccount: boolean;
+  isLoadingThreadContent: boolean;
   isRunning: boolean;
   error: string | null;
   accountError: string | null;
@@ -142,6 +144,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [isBooting, setIsBooting] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingAccount, setIsRefreshingAccount] = useState(false);
+  const [isLoadingThreadContent, setIsLoadingThreadContent] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
@@ -198,12 +201,14 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const loadThreadContent = useCallback(
     async (thread: BridgeThread | null) => {
       if (!thread) {
+        setIsLoadingThreadContent(false);
         setMessages([]);
         setActivities([]);
         setPendingApprovals([]);
         return null;
       }
 
+      setIsLoadingThreadContent(true);
       try {
         const response = await client.getThread(thread.id, { includeTurns: true });
         setSelectedThread(response.thread);
@@ -212,6 +217,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       } catch {
         setMessages(messagesFromThread(thread));
         return thread;
+      } finally {
+        setIsLoadingThreadContent(false);
       }
     },
     [client]
@@ -642,6 +649,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         id: assistantMessageId,
         role: "assistant",
         text: "",
+        parts: [],
         pending: true
       };
 
@@ -742,62 +750,69 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     if (event.event === "agent_message_delta") {
       const text = asString(data.text) ?? "";
       if (text.length > 0) {
-        appendAssistantText(assistantMessageId, text);
+        appendAssistantText(assistantMessageId, text, asString(data.item_id));
       }
       return;
     }
 
     if (event.event === "agent_message") {
       const text = asString(data.text);
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === assistantMessageId
-            ? { ...item, text: text && text.length > 0 ? text : item.text, pending: false }
-            : item
-        )
-      );
+      completeAssistantText(assistantMessageId, text, asString(data.item_id));
       return;
     }
 
     if (event.event === "tool_start") {
-      addOrUpdateActivity({
+      const activity = {
         id: asString(data.item_id) ?? createId("tool"),
         title: toolTitle(data),
         detail: toolDetail(data),
         status: "running"
-      });
+      } as const;
+      addOrUpdateActivity(activity);
+      addOrUpdateAssistantActivity(assistantMessageId, activity);
       return;
     }
 
     if (event.event === "tool_end") {
-      addOrUpdateActivity({
+      const activity = {
         id: asString(data.item_id) ?? createId("tool"),
         title: toolTitle(data),
         detail: toolDetail(data),
-        status: asString(data.status) === "failed" ? "failed" : "done"
-      });
+        status: isFailedStatus(data.status) ? "failed" : "done"
+      } as const;
+      addOrUpdateActivity(activity);
+      addOrUpdateAssistantActivity(assistantMessageId, activity);
       return;
     }
 
     if (event.event === "command_output") {
-      addOrUpdateActivity({
+      const activity = {
         id: asString(data.item_id) ?? createId("command"),
         title: "Command output",
         detail: trimMiddle(asString(data.output) ?? "", 180),
         status: "running"
-      });
+      } as const;
+      addOrUpdateActivity(activity);
+      appendAssistantActivityOutput(
+        assistantMessageId,
+        activity.id,
+        asString(data.output) ?? "",
+        activity.detail
+      );
       return;
     }
 
     if (event.event === "reasoning_summary") {
       const text = asString(data.text) ?? asString(data.summary);
       if (text) {
-        addOrUpdateActivity({
+        const activity = {
           id: asString(data.item_id) ?? createId("reasoning"),
           title: "Reasoning",
           detail: trimMiddle(text, 180),
           status: "info"
-        });
+        } as const;
+        addOrUpdateActivity(activity);
+        addOrUpdateAssistantActivity(assistantMessageId, activity);
       }
       return;
     }
@@ -814,16 +829,31 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         detail: approvalSummary(approval),
         status: "running"
       });
+      addOrUpdateAssistantApproval(assistantMessageId, approval);
       return;
     }
 
     if (event.event === "file_change") {
-      addOrUpdateActivity({
+      const activity = {
         id: asString(data.item_id) ?? createId("file"),
         title: "File change",
         detail: asString(data.status) ?? undefined,
         status: "info"
-      });
+      } as const;
+      addOrUpdateActivity(activity);
+      addOrUpdateAssistantActivity(assistantMessageId, activity);
+      return;
+    }
+
+    if (event.event === "todo_list") {
+      const activity = {
+        id: asString(data.item_id) ?? createId("todo"),
+        title: "Plan updated",
+        detail: "Task list changed",
+        status: "info"
+      } as const;
+      addOrUpdateActivity(activity);
+      addOrUpdateAssistantActivity(assistantMessageId, activity);
       return;
     }
 
@@ -836,7 +866,11 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     if (event.event === "done") {
       const runId = asString(data.run_id) ?? activeRunId.current;
       setMessages((current) =>
-        current.map((item) => (item.id === assistantMessageId ? { ...item, pending: false } : item))
+        current.map((item) =>
+          item.id === assistantMessageId
+            ? { ...item, pending: false, parts: completePendingParts(item.parts) }
+            : item
+        )
       );
       if (runId) {
         setActiveRuns((current) => current.filter((run) => run.run_id !== runId));
@@ -866,7 +900,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setMessages((current) =>
       current.some((item) => item.id === assistantMessageId)
         ? current
-        : [...current, { id: assistantMessageId, role: "assistant", text: "", pending: true }]
+        : [...current, { id: assistantMessageId, role: "assistant", text: "", parts: [], pending: true }]
     );
 
     const abortController = new AbortController();
@@ -918,9 +952,56 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     });
   }, []);
 
-  const appendAssistantText = useCallback((messageId: string, text: string) => {
+  const appendAssistantText = useCallback((messageId: string, text: string, itemId?: string | null) => {
     setMessages((current) =>
-      current.map((item) => (item.id === messageId ? { ...item, text: `${item.text}${text}` } : item))
+      current.map((item) =>
+        item.id === messageId ? appendTextPart(item, text, itemId) : item
+      )
+    );
+  }, []);
+
+  const completeAssistantText = useCallback((messageId: string, text?: string | null, itemId?: string | null) => {
+    setMessages((current) =>
+      current.map((item) =>
+        item.id === messageId ? completeTextPart(item, text, itemId) : item
+      )
+    );
+  }, []);
+
+  const addOrUpdateAssistantActivity = useCallback((messageId: string, activity: ActivityItem) => {
+    setMessages((current) =>
+      current.map((item) =>
+        item.id === messageId ? upsertActivityPart(item, activity) : item
+      )
+    );
+  }, []);
+
+  const appendAssistantActivityOutput = useCallback(
+    (messageId: string, activityId: string, output: string, fallbackDetail?: string) => {
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === messageId
+            ? appendActivityOutputPart(item, activityId, output, fallbackDetail)
+            : item
+        )
+      );
+    },
+    []
+  );
+
+  const addOrUpdateAssistantApproval = useCallback((messageId: string, approval: PendingApproval) => {
+    setMessages((current) =>
+      current.map((item) =>
+        item.id === messageId ? upsertApprovalPart(item, approval) : item
+      )
+    );
+  }, []);
+
+  const markApprovalAnswered = useCallback((approvalId: string, decision: string) => {
+    setMessages((current) =>
+      current.map((item) =>
+        item.role === "assistant" ? answerApprovalPart(item, approvalId, decision) : item
+      )
     );
   }, []);
 
@@ -928,7 +1009,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setMessages((current) =>
       current.map((item) =>
         item.id === messageId
-          ? { ...item, text: item.text || message, pending: false }
+          ? failAssistantMessage(item, message)
           : item
       )
     );
@@ -961,6 +1042,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setPendingApprovals((current) =>
         current.filter((item) => item.approval_id !== approval.approval_id)
       );
+      markApprovalAnswered(approval.approval_id, decision);
       addOrUpdateActivity({
         id: approval.approval_id,
         title: "Approval answered",
@@ -968,7 +1050,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         status: "done"
       });
     },
-    [addOrUpdateActivity, client]
+    [addOrUpdateActivity, client, markApprovalAnswered]
   );
 
   const saveCodexDefaults = useCallback(async () => {
@@ -1025,6 +1107,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       isBooting,
       isRefreshing,
       isRefreshingAccount,
+      isLoadingThreadContent,
       isRunning,
       error,
       accountError,
@@ -1068,6 +1151,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       error,
       health,
       isBooting,
+      isLoadingThreadContent,
       isRefreshingAccount,
       isRefreshing,
       isRunning,
@@ -1134,44 +1218,321 @@ function isActiveRunStatus(status: string) {
   return status === "starting" || status === "running" || status === "waiting_approval";
 }
 
+function isFailedStatus(status: unknown) {
+  const normalized = lowerString(status);
+  return normalized === "failed" || normalized === "error" || normalized === "errored";
+}
+
+function appendTextPart(message: ChatMessage, text: string, itemId?: string | null): ChatMessage {
+  const parts = ensureMessageParts(message);
+  const partId = itemId ? textPartId(itemId) : null;
+  const existingIndex = partId
+    ? parts.findIndex((part) => part.id === partId && part.type === "text")
+    : -1;
+
+  if (existingIndex >= 0) {
+    const existing = parts[existingIndex];
+    if (existing?.type === "text") {
+      parts[existingIndex] = {
+        ...existing,
+        text: `${existing.text}${text}`,
+        pending: true
+      };
+    }
+  } else {
+    const last = parts[parts.length - 1];
+    if (!partId && last?.type === "text" && last.pending !== false) {
+      parts[parts.length - 1] = {
+        ...last,
+        text: `${last.text}${text}`,
+        pending: true
+      };
+    } else {
+      parts.push({
+        id: partId ?? createId("text"),
+        type: "text",
+        text,
+        pending: true
+      });
+    }
+  }
+
+  return {
+    ...message,
+    text: messageTextFromParts(parts),
+    parts
+  };
+}
+
+function completeTextPart(message: ChatMessage, text?: string | null, itemId?: string | null): ChatMessage {
+  const cleanText = text ?? "";
+  const parts = ensureMessageParts(message);
+  const partId = itemId ? textPartId(itemId) : null;
+  const existingIndex = partId
+    ? parts.findIndex((part) => part.id === partId && part.type === "text")
+    : -1;
+
+  if (existingIndex >= 0) {
+    const existing = parts[existingIndex];
+    if (existing?.type === "text") {
+      parts[existingIndex] = {
+        ...existing,
+        text: cleanText.length > 0 ? cleanText : existing.text,
+        pending: false
+      };
+    }
+  } else {
+    const lastIndex = parts.length - 1;
+    const existing = parts[lastIndex];
+    if (!partId && existing?.type === "text") {
+      parts[lastIndex] = {
+        ...existing,
+        text: cleanText.length > 0 ? cleanText : existing.text,
+        pending: false
+      };
+    } else if (cleanText.length > 0) {
+      parts.push({
+        id: partId ?? createId("text"),
+        type: "text",
+        text: cleanText,
+        pending: false
+      });
+    }
+  }
+
+  return {
+    ...message,
+    text: messageTextFromParts(parts),
+    parts
+  };
+}
+
+function upsertActivityPart(message: ChatMessage, activity: ActivityItem): ChatMessage {
+  const parts = ensureMessageParts(message);
+  const partId = activityPartId(activity.id);
+  const existingIndex = parts.findIndex((part) => part.id === partId && part.type === "activity");
+  const existing = existingIndex >= 0 ? parts[existingIndex] : undefined;
+  const nextPart: Extract<ChatMessagePart, { type: "activity" }> = {
+    id: partId,
+    type: "activity",
+    title: activity.title,
+    detail: activity.detail,
+    status: activity.status,
+    output: existing?.type === "activity" ? existing.output : undefined
+  };
+
+  if (existingIndex >= 0) {
+    parts[existingIndex] = nextPart;
+  } else {
+    parts.push(nextPart);
+  }
+
+  return { ...message, parts };
+}
+
+function appendActivityOutputPart(
+  message: ChatMessage,
+  activityId: string,
+  output: string,
+  fallbackDetail?: string
+): ChatMessage {
+  const parts = ensureMessageParts(message);
+  const partId = activityPartId(activityId);
+  const existingIndex = parts.findIndex((part) => part.id === partId && part.type === "activity");
+
+  if (existingIndex >= 0) {
+    const existing = parts[existingIndex];
+    if (existing?.type === "activity") {
+      const nextOutput = `${existing.output ?? ""}${output}`;
+      parts[existingIndex] = {
+        ...existing,
+        detail: fallbackDetail ?? existing.detail,
+        output: trimMiddle(nextOutput, 360),
+        status: existing.status === "done" || existing.status === "failed" ? existing.status : "running"
+      };
+    }
+  } else {
+    parts.push({
+      id: partId,
+      type: "activity",
+      title: "Command output",
+      detail: fallbackDetail,
+      output: trimMiddle(output, 360),
+      status: "running"
+    });
+  }
+
+  return { ...message, parts };
+}
+
+function upsertApprovalPart(message: ChatMessage, approval: PendingApproval): ChatMessage {
+  const parts = ensureMessageParts(message);
+  const partId = approvalPartId(approval.approval_id);
+  const existingIndex = parts.findIndex((part) => part.id === partId && part.type === "approval");
+
+  const nextPart = {
+    id: partId,
+    type: "approval" as const,
+    approval,
+    status: "pending" as const
+  };
+
+  if (existingIndex >= 0) {
+    parts[existingIndex] = nextPart;
+  } else {
+    parts.push(nextPart);
+  }
+
+  return { ...message, parts };
+}
+
+function answerApprovalPart(message: ChatMessage, approvalId: string, decision: string): ChatMessage {
+  const parts = ensureMessageParts(message).map((part): ChatMessagePart => {
+    if (part.type !== "approval" || part.approval.approval_id !== approvalId) {
+      return part;
+    }
+    return {
+      ...part,
+      status: "answered",
+      decision
+    };
+  });
+  return { ...message, parts };
+}
+
+function completePendingParts(parts: ChatMessagePart[] | undefined) {
+  return (parts ?? []).map((part): ChatMessagePart =>
+    part.type === "text" ? { ...part, pending: false } : part
+  );
+}
+
+function failAssistantMessage(message: ChatMessage, error: string): ChatMessage {
+  const parts = ensureMessageParts(message);
+  if (parts.length === 0) {
+    parts.push({
+      id: createId("text"),
+      type: "text",
+      text: error,
+      pending: false
+    });
+  }
+  return {
+    ...message,
+    text: message.text || error,
+    pending: false,
+    parts: completePendingParts(parts)
+  };
+}
+
+function ensureMessageParts(message: ChatMessage): ChatMessagePart[] {
+  if (message.parts) {
+    return [...message.parts];
+  }
+  if (message.text.trim()) {
+    return [
+      {
+        id: `${message.id}_text`,
+        type: "text",
+        text: message.text,
+        ...(message.pending !== undefined ? { pending: message.pending } : {})
+      }
+    ];
+  }
+  return [];
+}
+
+function messageTextFromParts(parts: ChatMessagePart[]) {
+  return parts
+    .filter((part): part is Extract<ChatMessagePart, { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .filter((text) => text.trim().length > 0)
+    .join("\n\n");
+}
+
+function textPartId(itemId: string) {
+  return `text_${itemId}`;
+}
+
+function activityPartId(activityId: string) {
+  return `activity_${activityId}`;
+}
+
+function approvalPartId(approvalId: string) {
+  return `approval_${approvalId}`;
+}
+
 function messagesFromThread(thread: BridgeThread) {
   const turns = Array.isArray(thread.turns) ? thread.turns : [];
   const messages: ChatMessage[] = [];
 
-  for (const turn of turns) {
+  turns.forEach((turn, turnIndex) => {
     const record = asRecord(turn);
     if (!record) {
-      continue;
+      return;
     }
+    const turnId = asString(record.id) ?? asString(record.turnId) ?? `turn_${turnIndex}`;
 
     for (const text of textEntries(record.input ?? record.userInput ?? record.prompt)) {
       messages.push({
-        id: createId("history_user"),
+        id: historyId("history_user", turnId, messages.length),
         role: "user",
         text
       });
     }
 
-    const items = arrayValue(record.items ?? record.output ?? record.responses);
-    for (const item of items) {
+    const items = turnItems(record);
+    const toolResultsByCallId = collectToolResults(items);
+    const assistantParts: ChatMessagePart[] = [];
+
+    items.forEach((item, itemIndex) => {
       const itemRecord = asRecord(item);
       if (!itemRecord) {
-        continue;
+        return;
       }
 
-      const role = asString(itemRecord.role);
-      const type = asString(itemRecord.type);
+      const role = lowerString(itemRecord.role);
+      const type = lowerString(itemRecord.type);
       const text = firstText(itemRecord.text, itemRecord.content, itemRecord.message);
-      if (!text) {
-        continue;
+
+      if (role === "user" || role === "human" || type === "usermessage" || type === "user_message") {
+        if (text) {
+          messages.push({
+            id: historyId("history_user", turnId, itemIndex),
+            role: "user",
+            text
+          });
+        }
+        return;
       }
 
-      if (role === "user" || type === "userMessage") {
-        messages.push({ id: createId("history_user"), role: "user", text });
-      } else if (role === "assistant" || type === "agentMessage" || type === "assistantMessage") {
-        messages.push({ id: createId("history_assistant"), role: "assistant", text });
+      if (
+        role === "assistant" ||
+        role === "ai" ||
+        role === "model" ||
+        type === "agentmessage" ||
+        type === "agent_message" ||
+        type === "assistantmessage" ||
+        type === "assistant_message"
+      ) {
+        if (text) {
+          assistantParts.push({
+            id: historyId("history_text", turnId, itemIndex),
+            type: "text",
+            text,
+            pending: false
+          });
+        }
+        for (const part of toolCallParts(itemRecord, toolResultsByCallId, turnId, itemIndex)) {
+          assistantParts.push(part);
+        }
+        return;
       }
-    }
+
+      const activityPart = activityPartFromHistoryItem(itemRecord, toolResultsByCallId, turnId, itemIndex);
+      if (activityPart) {
+        assistantParts.push(activityPart);
+      }
+    });
 
     const assistantText = firstText(
       record.assistantMessage,
@@ -1179,16 +1540,246 @@ function messagesFromThread(thread: BridgeThread) {
       record.outputText,
       record.finalMessage
     );
-    if (assistantText) {
-      messages.push({
-        id: createId("history_assistant"),
-        role: "assistant",
-        text: assistantText
+    if (assistantText && !assistantParts.some((part) => part.type === "text" && part.text === assistantText)) {
+      assistantParts.push({
+        id: historyId("history_text", turnId, "final"),
+        type: "text",
+        text: assistantText,
+        pending: false
       });
+    }
+
+    if (assistantParts.length > 0) {
+      messages.push({
+        id: historyId("history_assistant", turnId, messages.length),
+        role: "assistant",
+        text: messageTextFromParts(assistantParts),
+        parts: assistantParts,
+        pending: false
+      });
+    }
+  });
+
+  return messages;
+}
+
+function turnItems(turn: Record<string, unknown>) {
+  return arrayValue(
+    turn.items ??
+      turn.output ??
+      turn.responses ??
+      turn.messages ??
+      turn.events ??
+      turn.steps
+  );
+}
+
+function collectToolResults(items: unknown[]) {
+  const results = new Map<string, string>();
+
+  for (const item of items) {
+    const record = asRecord(item);
+    if (!record) {
+      continue;
+    }
+
+    const role = lowerString(record.role);
+    const type = lowerString(record.type);
+    const callId = asString(record.tool_call_id) ?? asString(record.toolCallId) ?? asString(record.call_id);
+    if (!callId || (role !== "tool" && type !== "tool" && type !== "tool_result" && type !== "toolresult")) {
+      continue;
+    }
+
+    const output = firstText(record.content, record.output, record.result, record.text);
+    if (output) {
+      results.set(callId, output);
     }
   }
 
-  return messages;
+  return results;
+}
+
+function toolCallParts(
+  item: Record<string, unknown>,
+  toolResultsByCallId: Map<string, string>,
+  turnId: string,
+  itemIndex: number
+): ChatMessagePart[] {
+  const toolCalls = arrayValue(item.tool_calls ?? item.toolCalls);
+  return toolCalls.flatMap((toolCall, toolIndex): ChatMessagePart[] => {
+    const record = asRecord(toolCall);
+    if (!record) {
+      return [];
+    }
+
+    const id = asString(record.id) ?? asString(record.call_id) ?? historyId("tool_call", turnId, `${itemIndex}_${toolIndex}`);
+    const args = stringifyPayload(record.args ?? record.arguments ?? record.input);
+    return [
+      {
+        id: activityPartId(id),
+        type: "activity",
+        title: asString(record.name) ?? asString(record.tool) ?? "Tool call",
+        detail: args,
+        output: toolResultsByCallId.get(id),
+        status: "done"
+      }
+    ];
+  });
+}
+
+function activityPartFromHistoryItem(
+  item: Record<string, unknown>,
+  toolResultsByCallId: Map<string, string>,
+  turnId: string,
+  itemIndex: number
+): Extract<ChatMessagePart, { type: "activity" }> | null {
+  const role = lowerString(item.role);
+  const type = lowerString(item.type);
+
+  if (role === "tool" || type === "tool" || type === "tool_result" || type === "toolresult") {
+    const callId = asString(item.tool_call_id) ?? asString(item.toolCallId) ?? asString(item.call_id);
+    return {
+      id: activityPartId(callId ?? historyId("tool_result", turnId, itemIndex)),
+      type: "activity",
+      title: asString(item.name) ?? "Tool result",
+      detail: optionalText(item.content, item.output, item.result, item.text),
+      status: historyStatus(item.status)
+    };
+  }
+
+  if (type === "reasoning") {
+    const detail = firstText(item.summary, item.text, item.content);
+    return detail
+      ? {
+          id: activityPartId(asString(item.id) ?? historyId("reasoning", turnId, itemIndex)),
+          type: "activity",
+          title: "Reasoning",
+          detail,
+          status: "info"
+        }
+      : null;
+  }
+
+  if (type === "commandexecution" || type === "command_execution") {
+    const id = asString(item.id) ?? historyId("command", turnId, itemIndex);
+    return {
+      id: activityPartId(id),
+      type: "activity",
+      title: "Command",
+      detail: commandDetail(item.command, item.cwd),
+      output: optionalText(item.aggregatedOutput, item.aggregated_output, item.output, item.result),
+      status: historyStatus(item.status, item.exitCode ?? item.exit_code)
+    };
+  }
+
+  if (type === "mcptoolcall" || type === "mcp_tool_call" || type === "dynamictoolcall") {
+    const id = asString(item.id) ?? historyId("mcp", turnId, itemIndex);
+    return {
+      id: activityPartId(id),
+      type: "activity",
+      title: asString(item.tool) ?? "MCP tool",
+      detail: asString(item.server) ?? stringifyPayload(item.input ?? item.args),
+      output: optionalText(item.output, item.result, item.error),
+      status: historyStatus(item.status, item.error ? 1 : undefined)
+    };
+  }
+
+  if (type === "websearch" || type === "web_search") {
+    const id = asString(item.id) ?? historyId("web", turnId, itemIndex);
+    return {
+      id: activityPartId(id),
+      type: "activity",
+      title: "Web search",
+      detail: asString(item.query) ?? optionalText(item.input),
+      output: optionalText(item.output, item.result),
+      status: historyStatus(item.status)
+    };
+  }
+
+  if (type === "filechange" || type === "file_change") {
+    const id = asString(item.id) ?? historyId("file", turnId, itemIndex);
+    return {
+      id: activityPartId(id),
+      type: "activity",
+      title: "File change",
+      detail: asString(item.status) ?? stringifyPayload(item.changes),
+      output: optionalText(item.output, item.result),
+      status: historyStatus(item.status)
+    };
+  }
+
+  if (type === "todo_list" || type === "todolist") {
+    const id = asString(item.id) ?? historyId("todo", turnId, itemIndex);
+    return {
+      id: activityPartId(id),
+      type: "activity",
+      title: "Plan updated",
+      detail: "Task list changed",
+      status: "info"
+    };
+  }
+
+  const result = toolResultsByCallId.get(asString(item.id) ?? "");
+  return result
+    ? {
+        id: activityPartId(asString(item.id) ?? historyId("tool", turnId, itemIndex)),
+        type: "activity",
+        title: asString(item.name) ?? "Tool result",
+        detail: result,
+        status: "done"
+      }
+    : null;
+}
+
+function historyStatus(status: unknown, exitCode?: unknown): ActivityItem["status"] {
+  const normalized = lowerString(status);
+  if (
+    normalized === "failed" ||
+    normalized === "error" ||
+    normalized === "errored" ||
+    (typeof exitCode === "number" && exitCode !== 0)
+  ) {
+    return "failed";
+  }
+  if (normalized === "running" || normalized === "in_progress" || normalized === "pending") {
+    return "running";
+  }
+  if (normalized === "info") {
+    return "info";
+  }
+  return "done";
+}
+
+function commandDetail(command: unknown, cwd: unknown) {
+  if (Array.isArray(command)) {
+    return command.map((part) => String(part)).join(" ");
+  }
+  if (typeof command === "string" && command.length > 0) {
+    return command;
+  }
+  return typeof cwd === "string" ? cwd : undefined;
+}
+
+function stringifyPayload(value: unknown) {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function lowerString(value: unknown) {
+  return typeof value === "string" ? value.toLowerCase() : null;
+}
+
+function historyId(prefix: string, turnId: string, suffix: string | number) {
+  return `${prefix}_${turnId}_${suffix}`;
 }
 
 function textEntries(value: unknown): string[] {
@@ -1234,6 +1825,10 @@ function firstText(...values: unknown[]): string | null {
   }
 
   return null;
+}
+
+function optionalText(...values: unknown[]): string | undefined {
+  return firstText(...values) ?? undefined;
 }
 
 function arrayValue(value: unknown) {

@@ -159,11 +159,40 @@ export type BridgeSseEvent<T = Record<string, unknown>> = {
 
 export type ChatRole = "user" | "assistant" | "system";
 
+export type ChatActivityStatus = "running" | "done" | "failed" | "info";
+
+export type ChatTextPart = {
+  id: string;
+  type: "text";
+  text: string;
+  pending?: boolean;
+};
+
+export type ChatActivityPart = {
+  id: string;
+  type: "activity";
+  title: string;
+  detail?: string | undefined;
+  output?: string | undefined;
+  status: ChatActivityStatus;
+};
+
+export type ChatApprovalPart = {
+  id: string;
+  type: "approval";
+  approval: PendingApproval;
+  status: "pending" | "answered";
+  decision?: string | undefined;
+};
+
+export type ChatMessagePart = ChatTextPart | ChatActivityPart | ChatApprovalPart;
+
 export type ChatMessage = {
   id: string;
   role: ChatRole;
   text: string;
   pending?: boolean;
+  parts?: ChatMessagePart[];
 };
 
 export type ActivityItem = {

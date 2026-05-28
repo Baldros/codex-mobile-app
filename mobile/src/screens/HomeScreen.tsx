@@ -18,7 +18,7 @@ import {
   X,
   Zap
 } from "lucide-react-native";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -46,6 +46,7 @@ import {
 } from "../domain/composerOptions";
 import type {
   ChatMessage,
+  ChatMessagePart,
   CodexAccountResponse,
   CodexModel,
   PendingApproval,
@@ -67,12 +68,31 @@ export function HomeScreen() {
   const [draft, setDraft] = useState("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [limitsVisible, setLimitsVisible] = useState(false);
+  const messageListRef = useRef<FlatList<ChatMessage> | null>(null);
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
     [bridge.models, bridge.selectedModelId]
   );
   const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
   const composerBottomPadding = spacing.md + (keyboardVisible ? keyboardComposerGap : insets.bottom);
+  const latestMessageMarker = useMemo(() => {
+    const last = bridge.messages[bridge.messages.length - 1];
+    if (!last) {
+      return "empty";
+    }
+    const partMarker = last.parts
+      ?.map((part) => {
+        if (part.type === "text") {
+          return `${part.id}:${part.text.length}:${part.pending ? "p" : "d"}`;
+        }
+        if (part.type === "activity") {
+          return `${part.id}:${part.status}:${part.detail ?? ""}:${part.output?.length ?? 0}`;
+        }
+        return `${part.id}:${part.status}:${part.decision ?? ""}`;
+      })
+      .join("|");
+    return `${last.id}:${last.text.length}:${last.pending ? "p" : "d"}:${partMarker ?? ""}`;
+  }, [bridge.messages]);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
@@ -83,6 +103,17 @@ export function HomeScreen() {
       hideSubscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (bridge.messages.length === 0) {
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      messageListRef.current?.scrollToEnd({ animated: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [bridge.messages.length, latestMessageMarker]);
 
   return (
     <Screen>
@@ -131,37 +162,24 @@ export function HomeScreen() {
           <IconAction icon={MessageSquarePlus} label="New conversation" onPress={() => void bridge.createNewThread()} />
         </View>
 
-        {bridge.activities.length > 0 ? (
-          <View style={styles.activityRail}>
-            <Terminal size={15} color={colors.textMuted} />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {bridge.activities.map((activity) => (
-                <View key={activity.id} style={styles.activityItem}>
-                  <Text numberOfLines={1} style={styles.activityTitle}>
-                    {activity.title}
-                  </Text>
-                  {activity.detail ? (
-                    <Text numberOfLines={1} style={styles.activityDetail}>
-                      {activity.detail}
-                    </Text>
-                  ) : null}
-                </View>
-              ))}
-            </ScrollView>
-          </View>
-        ) : null}
-
-        {bridge.pendingApprovals.map((approval) => (
-          <ApprovalPanel key={approval.approval_id} approval={approval} />
-        ))}
-
         <FlatList
+          ref={messageListRef}
           data={bridge.messages}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <MessageBubble message={item} />}
+          renderItem={({ item }) => (
+            <MessageBubble
+              message={item}
+              onRespondApproval={(approval, decision) => void bridge.respondApproval(approval, decision)}
+            />
+          )}
           contentContainerStyle={styles.messageList}
           style={styles.messages}
-          ListEmptyComponent={<EmptyChat />}
+          ListEmptyComponent={
+            <EmptyChat
+              isLoading={bridge.isLoadingThreadContent}
+              hasSelectedThread={Boolean(bridge.selectedThread)}
+            />
+          }
         />
 
         <View style={[styles.composer, { paddingBottom: composerBottomPadding }]}>
@@ -573,8 +591,16 @@ function LimitMeter({ label, limitWindow }: { label: string; limitWindow: RateLi
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+function MessageBubble({
+  message,
+  onRespondApproval
+}: {
+  message: ChatMessage;
+  onRespondApproval: (approval: PendingApproval, decision: string) => void;
+}) {
   const isUser = message.role === "user";
+  const parts = messageParts(message);
+
   return (
     <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
       <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
@@ -582,56 +608,241 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           {isUser ? "You" : "Codex"}
           {message.pending ? " ." : ""}
         </Text>
-        <Text style={[styles.messageText, isUser && styles.userText]}>
-          {message.text || "Working..."}
-        </Text>
+        {isUser ? (
+          <Text style={[styles.messageText, styles.userText]}>{message.text}</Text>
+        ) : parts.length > 0 ? (
+          <View style={styles.messageParts}>
+            {parts.map((part, index) => (
+              <MessagePart
+                key={part.id}
+                part={part}
+                isFirst={index === 0}
+                onRespondApproval={onRespondApproval}
+              />
+            ))}
+          </View>
+        ) : (
+          <View style={styles.workingRow}>
+            <ActivityIndicator color={colors.accent} size="small" />
+            <Text style={styles.workingText}>Working...</Text>
+          </View>
+        )}
       </View>
     </View>
   );
 }
 
-function ApprovalPanel({ approval }: { approval: PendingApproval }) {
-  const bridge = useBridge();
-  const decisions = approval.available_decisions ?? ["accept", "decline", "cancel"];
+function MessagePart({
+  part,
+  isFirst,
+  onRespondApproval
+}: {
+  part: ChatMessagePart;
+  isFirst: boolean;
+  onRespondApproval: (approval: PendingApproval, decision: string) => void;
+}) {
+  if (part.type === "text") {
+    return (
+      <Text style={[styles.messageText, !isFirst && styles.messagePartSpacing]}>
+        {part.text || (part.pending ? "Working..." : "")}
+      </Text>
+    );
+  }
+
+  if (part.type === "approval") {
+    return (
+      <ApprovalTimelinePart
+        part={part}
+        isFirst={isFirst}
+        onRespondApproval={onRespondApproval}
+      />
+    );
+  }
+
+  return <ActivityTimelinePart part={part} isFirst={isFirst} />;
+}
+
+function ActivityTimelinePart({
+  part,
+  isFirst
+}: {
+  part: Extract<ChatMessagePart, { type: "activity" }>;
+  isFirst: boolean;
+}) {
+  const tone = activityTone(part.status);
 
   return (
-    <View style={styles.approvalPanel}>
-      <Text style={styles.approvalTitle}>Approval pending</Text>
-      <Text numberOfLines={2} style={styles.approvalDetail}>
-        {Array.isArray(approval.command) ? approval.command.join(" ") : approval.command ?? approval.reason ?? approval.method}
-      </Text>
-      <View style={styles.approvalActions}>
-        {decisions.map((decision) => (
-          <Pressable
-            key={decision}
-            onPress={() => void bridge.respondApproval(approval, decision)}
-            style={[
-              styles.approvalButton,
-              decision.startsWith("accept") ? styles.approvalAccept : styles.approvalDecline
-            ]}
-          >
-            <Text
-              style={[
-                styles.approvalButtonText,
-                decision.startsWith("accept") ? styles.approvalAcceptText : styles.approvalDeclineText
-              ]}
-            >
-              {decision}
+    <View style={[styles.timelineRow, !isFirst && styles.messagePartSpacing]}>
+      <View style={styles.timelineRail}>
+        <View style={[styles.timelineNode, { backgroundColor: tone.color }]} />
+      </View>
+      <View style={[styles.timelineCard, { borderColor: tone.border, backgroundColor: tone.background }]}>
+        <View style={styles.timelineHeader}>
+          <View style={styles.timelineTitleWrap}>
+            <Terminal size={14} color={tone.color} />
+            <Text numberOfLines={1} style={styles.timelineTitle}>
+              {part.title}
             </Text>
-          </Pressable>
-        ))}
+          </View>
+          <View style={[styles.timelineStatus, { backgroundColor: tone.pill }]}>
+            {part.status === "running" ? <ActivityIndicator color={tone.color} size="small" /> : null}
+            {part.status === "done" ? <Check size={12} color={tone.color} /> : null}
+            {part.status === "failed" ? <X size={12} color={tone.color} /> : null}
+            <Text style={[styles.timelineStatusText, { color: tone.color }]}>{tone.label}</Text>
+          </View>
+        </View>
+        {part.detail ? (
+          <Text numberOfLines={3} style={styles.timelineDetail}>
+            {part.detail}
+          </Text>
+        ) : null}
+        {part.output ? (
+          <Text numberOfLines={4} style={styles.timelineOutput}>
+            {part.output}
+          </Text>
+        ) : null}
       </View>
     </View>
   );
 }
 
-function EmptyChat() {
+function ApprovalTimelinePart({
+  part,
+  isFirst,
+  onRespondApproval
+}: {
+  part: Extract<ChatMessagePart, { type: "approval" }>;
+  isFirst: boolean;
+  onRespondApproval: (approval: PendingApproval, decision: string) => void;
+}) {
+  const approval = part.approval;
+  const decisions = approval.available_decisions ?? ["accept", "decline", "cancel"];
+  const isPending = part.status === "pending";
+
+  return (
+    <View style={[styles.timelineRow, !isFirst && styles.messagePartSpacing]}>
+      <View style={styles.timelineRail}>
+        <View style={[styles.timelineNode, { backgroundColor: colors.warning }]} />
+      </View>
+      <View style={[styles.timelineCard, styles.approvalTimelineCard]}>
+        <View style={styles.timelineHeader}>
+          <View style={styles.timelineTitleWrap}>
+            <ShieldCheck size={14} color={colors.warning} />
+            <Text style={styles.timelineTitle}>Approval</Text>
+          </View>
+          <View style={styles.approvalPendingPill}>
+            <Text style={styles.approvalPendingText}>
+              {isPending ? "Pending" : part.decision ?? "Answered"}
+            </Text>
+          </View>
+        </View>
+        <Text numberOfLines={3} style={styles.timelineDetail}>
+          {approvalDetail(approval)}
+        </Text>
+        {isPending ? (
+          <View style={styles.approvalActions}>
+            {decisions.map((decision) => (
+              <Pressable
+                key={decision}
+                onPress={() => onRespondApproval(approval, decision)}
+                style={[
+                  styles.approvalButton,
+                  decision.startsWith("accept") ? styles.approvalAccept : styles.approvalDecline
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.approvalButtonText,
+                    decision.startsWith("accept") ? styles.approvalAcceptText : styles.approvalDeclineText
+                  ]}
+                >
+                  {decision}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function EmptyChat({ isLoading, hasSelectedThread }: { isLoading: boolean; hasSelectedThread: boolean }) {
+  const title = isLoading ? "Loading conversation" : hasSelectedThread ? "No readable messages" : "Ready";
+  const text = isLoading
+    ? "Fetching this thread history."
+    : hasSelectedThread
+      ? "This thread opened, but no text turns were returned by the bridge."
+      : "Choose a repository and start a conversation.";
+
   return (
     <View style={styles.empty}>
-      <Text style={styles.emptyTitle}>Ready</Text>
-      <Text style={styles.emptyText}>Choose a repository and start a conversation.</Text>
+      {isLoading ? <ActivityIndicator color={colors.accent} /> : null}
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyText}>{text}</Text>
     </View>
   );
+}
+
+function messageParts(message: ChatMessage): ChatMessagePart[] {
+  if (message.parts && message.parts.length > 0) {
+    return message.parts;
+  }
+  if (message.text.trim()) {
+    return [
+      {
+        id: `${message.id}_text`,
+        type: "text",
+        text: message.text,
+        ...(message.pending !== undefined ? { pending: message.pending } : {})
+      }
+    ];
+  }
+  return [];
+}
+
+function activityTone(status: Extract<ChatMessagePart, { type: "activity" }>["status"]) {
+  if (status === "running") {
+    return {
+      color: colors.warning,
+      border: "rgba(183, 110, 0, 0.22)",
+      background: "rgba(255, 243, 214, 0.72)",
+      pill: "rgba(183, 110, 0, 0.10)",
+      label: "Running"
+    };
+  }
+  if (status === "failed") {
+    return {
+      color: colors.danger,
+      border: "rgba(180, 35, 24, 0.22)",
+      background: colors.dangerSoft,
+      pill: "rgba(180, 35, 24, 0.10)",
+      label: "Failed"
+    };
+  }
+  if (status === "done") {
+    return {
+      color: colors.success,
+      border: "rgba(31, 122, 77, 0.20)",
+      background: colors.successSoft,
+      pill: "rgba(31, 122, 77, 0.10)",
+      label: "Done"
+    };
+  }
+  return {
+    color: colors.accent,
+    border: "rgba(23, 107, 135, 0.18)",
+    background: colors.accentSoft,
+    pill: "rgba(23, 107, 135, 0.10)",
+    label: "Info"
+  };
+}
+
+function approvalDetail(approval: PendingApproval) {
+  if (approval.command) {
+    return Array.isArray(approval.command) ? approval.command.join(" ") : approval.command;
+  }
+  return approval.reason ?? approval.method ?? approval.approval_type ?? "Approval requested";
 }
 
 function limitsMenuDetail(bridge: {
@@ -802,53 +1013,6 @@ const styles = StyleSheet.create({
     fontWeight: fontWeights.body,
     marginTop: 2
   },
-  activityRail: {
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-    minHeight: 46,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm
-  },
-  activityItem: {
-    maxWidth: 190,
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceMuted,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    marginRight: spacing.sm
-  },
-  activityTitle: {
-    color: colors.text,
-    fontSize: 12,
-    fontWeight: fontWeights.action
-  },
-  activityDetail: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: fontWeights.body,
-    marginTop: 2
-  },
-  approvalPanel: {
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.warning,
-    backgroundColor: colors.warningSoft,
-    padding: spacing.md
-  },
-  approvalTitle: {
-    color: colors.warning,
-    fontSize: 13,
-    fontWeight: fontWeights.action
-  },
-  approvalDetail: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: fontWeights.body,
-    marginTop: 4
-  },
   approvalActions: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -924,6 +1088,111 @@ const styles = StyleSheet.create({
   },
   userText: {
     color: "#FFFFFF"
+  },
+  messageParts: {
+    gap: spacing.sm
+  },
+  messagePartSpacing: {
+    marginTop: spacing.xs
+  },
+  workingRow: {
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  workingText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: fontWeights.subtitle
+  },
+  timelineRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: spacing.sm
+  },
+  timelineRail: {
+    width: 14,
+    alignItems: "center",
+    paddingTop: 11
+  },
+  timelineNode: {
+    width: 8,
+    height: 8,
+    borderRadius: 4
+  },
+  timelineCard: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  timelineHeader: {
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  timelineTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  timelineTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: fontWeights.action
+  },
+  timelineStatus: {
+    minHeight: 24,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  timelineStatusText: {
+    fontSize: 10,
+    fontWeight: fontWeights.action
+  },
+  timelineDetail: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    lineHeight: 17,
+    marginTop: spacing.xs
+  },
+  timelineOutput: {
+    color: colors.code,
+    fontSize: 11,
+    fontWeight: fontWeights.body,
+    lineHeight: 16,
+    marginTop: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radii.sm,
+    backgroundColor: "rgba(255, 255, 255, 0.64)"
+  },
+  approvalTimelineCard: {
+    borderColor: "rgba(183, 110, 0, 0.24)",
+    backgroundColor: colors.warningSoft
+  },
+  approvalPendingPill: {
+    minHeight: 24,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
+    justifyContent: "center",
+    backgroundColor: "rgba(183, 110, 0, 0.10)"
+  },
+  approvalPendingText: {
+    color: colors.warning,
+    fontSize: 10,
+    fontWeight: fontWeights.action
   },
   empty: {
     flex: 1,
