@@ -2,6 +2,7 @@ import { router } from "expo-router";
 import { Save, X } from "lucide-react-native";
 import React, { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { IconAction } from "../components/IconAction";
 import { Screen } from "../components/Screen";
@@ -21,6 +22,7 @@ const fallbackEfforts: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
 
 export function SettingsScreen() {
   const bridge = useBridge();
+  const insets = useSafeAreaInsets();
   const [baseUrlDraft, setBaseUrlDraft] = useState(bridge.baseUrl);
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
@@ -56,7 +58,7 @@ export function SettingsScreen() {
         <IconAction icon={X} label="Close" onPress={() => router.back()} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: spacing.lg + insets.bottom }]}>
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Execution Mode</Text>
           <InfoRow
