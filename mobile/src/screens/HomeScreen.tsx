@@ -17,9 +17,10 @@ import {
   X,
   Zap
 } from "lucide-react-native";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -53,16 +54,28 @@ export function HomeScreen() {
   const bridge = useBridge();
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState("");
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
     [bridge.models, bridge.selectedModelId]
   );
   const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
+  const composerBottomPadding = spacing.md + (keyboardVisible ? 0 : insets.bottom);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   return (
     <Screen>
       <KeyboardAvoidingView
-        behavior={Platform.select({ ios: "padding", default: undefined })}
+        behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
         style={styles.keyboard}
       >
         <View style={styles.header}>
@@ -137,7 +150,7 @@ export function HomeScreen() {
           ListEmptyComponent={<EmptyChat />}
         />
 
-        <View style={[styles.composer, { paddingBottom: spacing.md + insets.bottom }]}>
+        <View style={[styles.composer, { paddingBottom: composerBottomPadding }]}>
           <ComposerMenu selectedModel={selectedModel} />
           <TextInput
             value={draft}
