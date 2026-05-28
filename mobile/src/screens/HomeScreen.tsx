@@ -30,6 +30,7 @@ import {
   TextInput,
   View
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { IconAction } from "../components/IconAction";
 import { Screen } from "../components/Screen";
@@ -50,6 +51,7 @@ type MenuPanel = "main" | "models" | "effort" | "fast";
 
 export function HomeScreen() {
   const bridge = useBridge();
+  const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState("");
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
@@ -135,7 +137,7 @@ export function HomeScreen() {
           ListEmptyComponent={<EmptyChat />}
         />
 
-        <View style={styles.composer}>
+        <View style={[styles.composer, { paddingBottom: spacing.md + insets.bottom }]}>
           <ComposerMenu selectedModel={selectedModel} />
           <TextInput
             value={draft}
@@ -168,6 +170,7 @@ export function HomeScreen() {
 
 function ComposerMenu({ selectedModel }: { selectedModel: CodexModel | null }) {
   const bridge = useBridge();
+  const insets = useSafeAreaInsets();
   const [visible, setVisible] = useState(false);
   const [panel, setPanel] = useState<MenuPanel>("main");
   const efforts = effortsForModel(selectedModel);
@@ -192,7 +195,7 @@ function ComposerMenu({ selectedModel }: { selectedModel: CodexModel | null }) {
       </Pressable>
 
       <Modal transparent visible={visible} animationType="fade" onRequestClose={close}>
-        <Pressable style={styles.menuOverlay} onPress={close}>
+        <Pressable style={[styles.menuOverlay, { paddingBottom: spacing.lg + insets.bottom }]} onPress={close}>
           <Pressable style={styles.menuPanel} onPress={(event) => event.stopPropagation()}>
             <View style={styles.menuHeader}>
               {panel === "main" ? (
