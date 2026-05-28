@@ -49,6 +49,23 @@ $env:EXPO_PUBLIC_BRIDGE_URL="http://127.0.0.1:8787"
 npx expo start
 ```
 
+## Build config SSH
+
+Builds internos leem variaveis `CODEX_MOBILE_*` via `app.config.js`. Exemplo:
+
+```powershell
+$env:CODEX_MOBILE_GATEWAY="ssh_tunnel"
+$env:CODEX_MOBILE_SSH_TUNNEL_LOCAL_URL="http://127.0.0.1:18080"
+$env:CODEX_MOBILE_SSH_REMOTE_HOSTS="[SEU_IPV6]:22,SEU_IPV4_PUBLICO:39223"
+$env:CODEX_MOBILE_SSH_USERNAME="seu_usuario"
+$env:CODEX_MOBILE_SSH_PASSWORD="sua_senha"
+$env:CODEX_MOBILE_SSH_REMOTE_API_HOST="127.0.0.1"
+$env:CODEX_MOBILE_SSH_REMOTE_API_PORT="8787"
+$env:CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET="true"
+```
+
+O modulo Android inicial de tunnel fica em `modules/codex-ssh-tunnel`. Ele exige dev build/APK nativo; Expo Go nao carrega esse modulo local.
+
 ## Scripts
 
 ```powershell

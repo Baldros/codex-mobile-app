@@ -2,6 +2,7 @@ param(
     [string]$ApiHost = "127.0.0.1",
     [int]$ApiPort = 8787,
     [int]$SshPort = 22,
+    [int]$PublicSshPort = 0,
     [switch]$SkipBridgeHealth
 )
 
@@ -126,10 +127,11 @@ try {
 
 Write-Section "Checklist mobile 5G"
 
+$publicPortLabel = if ($PublicSshPort -gt 0) { $PublicSshPort } else { $SshPort }
 Write-Host "- Bridge no desktop: http://${ApiHost}:${ApiPort}/health"
 Write-Host "- Tunnel no mobile: http://127.0.0.1:18080/health"
-Write-Host "- SSH publico deve encaminhar para esta maquina na porta $SshPort."
-Write-Host "- sshd_config deve restringir PermitOpen ${ApiHost}:${ApiPort}."
+Write-Host "- SSH publico deve encaminhar porta $publicPortLabel para esta maquina na porta $SshPort."
+Write-Host "- Hardening futuro: sshd_config pode restringir PermitOpen ${ApiHost}:${ApiPort}."
 Write-Host "- Teste final deve ser feito com o celular fora do Wi-Fi."
 
 Write-Section "Resultado"

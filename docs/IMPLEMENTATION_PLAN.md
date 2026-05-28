@@ -66,13 +66,13 @@ Entregas:
 
 Entregas:
 
-- Config por build/env.
-- Suporte a endpoints multiplos.
-- Autenticacao por senha.
-- Autenticacao por chave privada.
-- Health check antes de liberar UI.
-- Reconnect com backoff.
-- Host key pinning ou pareamento trust-on-first-use.
+- Config por build/env: implementado para Expo via `CODEX_MOBILE_*`.
+- Suporte a endpoints multiplos: implementado no manager Android inicial.
+- Autenticacao por senha: implementado no modulo Android inicial.
+- Autenticacao por chave privada: implementado no modulo Android inicial.
+- Health check antes de chamadas HTTP/SSE: implementado via `ensureTransportReady`.
+- Reconnect com backoff: pendente como watchdog periodico.
+- Host key pinning ou pareamento trust-on-first-use: pendente.
 
 ## Fase 4: Historico nativo
 

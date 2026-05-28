@@ -37,6 +37,7 @@ Essa direcao segue a documentacao oficial atual do Codex:
 - `docs/ARCHITECTURE.md`: arquitetura alvo e decisoes vindas do Atlas Desktop Agent.
 - `docs/API_CONTRACT.md`: contrato HTTP/SSE entre mobile e bridge.
 - `docs/SSH_TUNNEL_RUNBOOK.md`: operacao do SSH tunnel em rede local e 5G.
+- `docs/MOBILE_ANDROID_BUILD_PLAYBOOK.md`: build Android interno e variaveis `CODEX_MOBILE_*`.
 - `docs/SECURITY_DECISIONS.md`: decisao sobre senha/chave SSH embutida.
 - `docs/IMPLEMENTATION_PLAN.md`: plano incremental de implementacao.
 

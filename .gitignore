@@ -18,6 +18,15 @@ pubspec.lock
 *.apk
 *.aab
 *.ipa
+*.pem
+*.key
+*.ppk
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.mobileprovision
+*.jks
+*.keystore
 
 *.log
 *.tmp

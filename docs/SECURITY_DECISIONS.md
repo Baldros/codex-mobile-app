@@ -91,6 +91,8 @@ Usuario dedicado:
 codex_mobile
 ```
 
+Tambem e aceitavel reaproveitar um usuario dedicado existente, como `atlas_ssh`, para o MVP. O importante e que a credencial do app nao seja a conta principal do Windows. Para reduzir blast radius, prefira uma chave SSH separada por app/dispositivo mesmo quando o usuario dedicado for compartilhado.
+
 Restricoes recomendadas:
 
 ```text
