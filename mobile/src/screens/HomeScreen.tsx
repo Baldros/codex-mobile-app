@@ -11,6 +11,7 @@ import {
   MessageSquarePlus,
   RefreshCcw,
   Send,
+  ShieldCheck,
   Settings,
   Square,
   Terminal,
@@ -19,6 +20,7 @@ import {
 } from "lucide-react-native";
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
@@ -42,25 +44,35 @@ import {
   isServiceTierAvailable,
   type FastTierOption
 } from "../domain/composerOptions";
-import type { ChatMessage, CodexModel, PendingApproval, ReasoningEffort } from "../domain/bridge";
+import type {
+  ChatMessage,
+  CodexAccountResponse,
+  CodexModel,
+  PendingApproval,
+  RateLimitSnapshot,
+  RateLimitWindow,
+  ReasoningEffort
+} from "../domain/bridge";
 import { useBridge } from "../state/BridgeProvider";
 import { colors, radii, spacing } from "../theme/colors";
 import { fontWeights } from "../theme/typography";
 import { compactPath } from "../utils/format";
 
 type MenuPanel = "main" | "models" | "effort" | "fast";
+const keyboardComposerGap = spacing.xl + spacing.xs;
 
 export function HomeScreen() {
   const bridge = useBridge();
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [limitsVisible, setLimitsVisible] = useState(false);
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
     [bridge.models, bridge.selectedModelId]
   );
   const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
-  const composerBottomPadding = spacing.md + (keyboardVisible ? 0 : insets.bottom);
+  const composerBottomPadding = spacing.md + (keyboardVisible ? keyboardComposerGap : insets.bottom);
 
   useEffect(() => {
     const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
@@ -93,6 +105,8 @@ export function HomeScreen() {
           <IconAction icon={RefreshCcw} label="Refresh" onPress={() => void bridge.refreshAll()} />
           <IconAction icon={Settings} label="Settings" onPress={() => router.push("/settings")} />
         </View>
+
+        <LimitsModal visible={limitsVisible} onClose={() => setLimitsVisible(false)} />
 
         {bridge.error ? (
           <View style={styles.errorBand}>
@@ -151,7 +165,13 @@ export function HomeScreen() {
         />
 
         <View style={[styles.composer, { paddingBottom: composerBottomPadding }]}>
-          <ComposerMenu selectedModel={selectedModel} />
+          <ComposerMenu
+            selectedModel={selectedModel}
+            onOpenLimits={() => {
+              setLimitsVisible(true);
+              void bridge.refreshAccount();
+            }}
+          />
           <TextInput
             value={draft}
             onChangeText={setDraft}
@@ -181,7 +201,13 @@ export function HomeScreen() {
   );
 }
 
-function ComposerMenu({ selectedModel }: { selectedModel: CodexModel | null }) {
+function ComposerMenu({
+  selectedModel,
+  onOpenLimits
+}: {
+  selectedModel: CodexModel | null;
+  onOpenLimits: () => void;
+}) {
   const bridge = useBridge();
   const insets = useSafeAreaInsets();
   const [visible, setVisible] = useState(false);
@@ -254,11 +280,13 @@ function ComposerMenu({ selectedModel }: { selectedModel: CodexModel | null }) {
                   showChevron
                 />
                 <MenuItem
-                  icon={<ListTree size={18} color={colors.textSubtle} />}
-                  label="Plan"
-                  detail="Unavailable"
-                  disabled
-                  onPress={() => undefined}
+                  icon={<ShieldCheck size={18} color={colors.textMuted} />}
+                  label="Limits"
+                  detail={limitsMenuDetail(bridge)}
+                  onPress={() => {
+                    close();
+                    onOpenLimits();
+                  }}
                 />
               </View>
             ) : null}
@@ -434,6 +462,117 @@ function FastTierItem({
   );
 }
 
+function LimitsModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const bridge = useBridge();
+  const insets = useSafeAreaInsets();
+  const limits = getCodexLimits(bridge.account);
+  const account = bridge.account?.account ?? null;
+  const planType = limits?.planType ?? account?.planType ?? null;
+  const subtitle = [account?.email, planType ? planTypeLabel(planType) : null]
+    .filter((item): item is string => Boolean(item))
+    .join(" / ");
+  const credits = limits?.credits ?? null;
+
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+      <View style={[styles.limitsOverlay, { paddingTop: spacing.lg + insets.top, paddingBottom: spacing.lg + insets.bottom }]}>
+        <View style={styles.limitsPanel}>
+          <View style={styles.limitsHeader}>
+            <View style={styles.limitsTitleWrap}>
+              <Text style={styles.limitsTitle}>Limits</Text>
+              <Text numberOfLines={1} style={styles.limitsSubtitle}>
+                {subtitle || "Codex account"}
+              </Text>
+            </View>
+            <IconAction
+              icon={RefreshCcw}
+              label="Refresh limits"
+              disabled={bridge.isRefreshingAccount}
+              onPress={() => void bridge.refreshAccount()}
+            />
+            <IconAction icon={X} label="Close limits" onPress={onClose} />
+          </View>
+
+          {bridge.isRefreshingAccount ? (
+            <View style={styles.limitsLoading}>
+              <ActivityIndicator color={colors.accent} />
+              <Text style={styles.limitsLoadingText}>Refreshing limits...</Text>
+            </View>
+          ) : null}
+
+          {bridge.accountError ? (
+            <View style={styles.limitsError}>
+              <Text style={styles.limitsErrorText}>{bridge.accountError}</Text>
+            </View>
+          ) : null}
+
+          {limits ? (
+            <View style={styles.limitMeters}>
+              <LimitMeter label="5h" limitWindow={limits.primary} />
+              <LimitMeter label="Weekly" limitWindow={limits.secondary} />
+            </View>
+          ) : bridge.isRefreshingAccount ? null : (
+            <View style={styles.limitsEmpty}>
+              <Text style={styles.limitsEmptyTitle}>Limits unavailable</Text>
+              <Text style={styles.limitsEmptyText}>
+                The bridge has not received rate limit data for this account yet.
+              </Text>
+            </View>
+          )}
+
+          {credits ? (
+            <View style={styles.creditsRow}>
+              <Text style={styles.creditsLabel}>Credits</Text>
+              <Text style={styles.creditsValue}>{creditsLabel(credits)}</Text>
+            </View>
+          ) : null}
+
+          {limits?.rateLimitReachedType ? (
+            <View style={styles.limitReached}>
+              <Text style={styles.limitReachedText}>{limitReachedLabel(limits.rateLimitReachedType)}</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function LimitMeter({ label, limitWindow }: { label: string; limitWindow: RateLimitWindow | null }) {
+  if (!limitWindow) {
+    return (
+      <View style={styles.limitMeter}>
+        <View style={styles.limitMeterHeader}>
+          <Text style={styles.limitMeterTitle}>{label}</Text>
+          <Text style={styles.limitUnavailable}>No data</Text>
+        </View>
+      </View>
+    );
+  }
+
+  const usedPercent = clampPercent(limitWindow.usedPercent);
+  const remainingPercent = Math.max(0, 100 - usedPercent);
+
+  return (
+    <View style={styles.limitMeter}>
+      <View style={styles.limitMeterHeader}>
+        <View>
+          <Text style={styles.limitMeterTitle}>{label}</Text>
+          <Text style={styles.limitMeterSubtitle}>{windowDurationLabel(limitWindow.windowDurationMins)}</Text>
+        </View>
+        <View style={styles.limitPercentWrap}>
+          <Text style={styles.limitRemaining}>{formatPercent(remainingPercent)} available</Text>
+          <Text style={styles.limitUsed}>{formatPercent(usedPercent)} used</Text>
+        </View>
+      </View>
+      <View style={styles.limitBarTrack}>
+        <View style={[styles.limitBarFill, { width: `${usedPercent}%` }]} />
+      </View>
+      <Text style={styles.limitReset}>{resetLabel(limitWindow.resetsAt)}</Text>
+    </View>
+  );
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   return (
@@ -493,6 +632,86 @@ function EmptyChat() {
       <Text style={styles.emptyText}>Choose a repository and start a conversation.</Text>
     </View>
   );
+}
+
+function limitsMenuDetail(bridge: {
+  account: CodexAccountResponse | null;
+  accountError: string | null;
+  isRefreshingAccount: boolean;
+}) {
+  if (bridge.isRefreshingAccount) {
+    return "Refreshing";
+  }
+  if (bridge.accountError) {
+    return "Needs attention";
+  }
+  const limits = getCodexLimits(bridge.account);
+  const planType = limits?.planType ?? bridge.account?.account?.planType;
+  return planType ? planTypeLabel(planType) : "Usage and credits";
+}
+
+function getCodexLimits(account: CodexAccountResponse | null): RateLimitSnapshot | null {
+  return account?.rateLimits?.rateLimitsByLimitId?.codex ?? account?.rateLimits?.rateLimits ?? null;
+}
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function formatPercent(value: number) {
+  return `${clampPercent(value)}%`;
+}
+
+function windowDurationLabel(minutes: number | null) {
+  if (minutes === 300) {
+    return "5h window";
+  }
+  if (minutes === 10080) {
+    return "Weekly window";
+  }
+  if (!minutes) {
+    return "Current window";
+  }
+  if (minutes % 60 === 0) {
+    return `${minutes / 60}h window`;
+  }
+  return `${minutes} min window`;
+}
+
+function resetLabel(resetsAt: number | null) {
+  if (!resetsAt) {
+    return "Reset not reported";
+  }
+
+  const milliseconds = resetsAt > 10_000_000_000 ? resetsAt : resetsAt * 1000;
+  const formatted = new Date(milliseconds).toLocaleString("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+  return `Reset ${formatted}`;
+}
+
+function planTypeLabel(planType: string) {
+  return planType.replace(/_/g, " ");
+}
+
+function creditsLabel(credits: NonNullable<RateLimitSnapshot["credits"]>) {
+  if (credits.unlimited) {
+    return "Unlimited";
+  }
+  if (credits.balance) {
+    return credits.balance;
+  }
+  return credits.hasCredits ? "Active" : "Unavailable";
+}
+
+function limitReachedLabel(rateLimitReachedType: string) {
+  return rateLimitReachedType.replace(/_/g, " ");
 }
 
 function panelTitle(panel: MenuPanel) {
@@ -763,6 +982,175 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: fontWeights.body,
     lineHeight: 20
+  },
+  limitsOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(16, 24, 40, 0.38)",
+    justifyContent: "center",
+    paddingHorizontal: spacing.lg
+  },
+  limitsPanel: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    padding: spacing.md,
+    gap: spacing.md
+  },
+  limitsHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  limitsTitleWrap: {
+    flex: 1,
+    minWidth: 0
+  },
+  limitsTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: fontWeights.title
+  },
+  limitsSubtitle: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    marginTop: 2
+  },
+  limitsLoading: {
+    minHeight: 38,
+    borderRadius: radii.md,
+    backgroundColor: colors.accentSoft,
+    paddingHorizontal: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  limitsLoadingText: {
+    color: colors.accent,
+    fontSize: 13,
+    fontWeight: fontWeights.action
+  },
+  limitsError: {
+    borderRadius: radii.md,
+    backgroundColor: colors.dangerSoft,
+    padding: spacing.md
+  },
+  limitsErrorText: {
+    color: colors.danger,
+    fontSize: 13,
+    fontWeight: fontWeights.subtitle
+  },
+  limitMeters: {
+    gap: spacing.sm
+  },
+  limitMeter: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    padding: spacing.md
+  },
+  limitMeterHeader: {
+    minHeight: 40,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: spacing.md
+  },
+  limitMeterTitle: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: fontWeights.action
+  },
+  limitMeterSubtitle: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    marginTop: 2
+  },
+  limitPercentWrap: {
+    alignItems: "flex-end"
+  },
+  limitRemaining: {
+    color: colors.success,
+    fontSize: 14,
+    fontWeight: fontWeights.action
+  },
+  limitUsed: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    marginTop: 2
+  },
+  limitBarTrack: {
+    height: 8,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceMuted,
+    overflow: "hidden",
+    marginTop: spacing.md
+  },
+  limitBarFill: {
+    height: 8,
+    borderRadius: radii.sm,
+    backgroundColor: colors.accent
+  },
+  limitReset: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    marginTop: spacing.sm
+  },
+  limitUnavailable: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: fontWeights.subtitle
+  },
+  limitsEmpty: {
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceMuted,
+    padding: spacing.md
+  },
+  limitsEmptyTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: fontWeights.action
+  },
+  limitsEmptyText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: fontWeights.body,
+    marginTop: 4,
+    lineHeight: 18
+  },
+  creditsRow: {
+    minHeight: 42,
+    borderTopWidth: 1,
+    borderTopColor: colors.surfaceMuted,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md
+  },
+  creditsLabel: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.label,
+    textTransform: "uppercase"
+  },
+  creditsValue: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: fontWeights.action
+  },
+  limitReached: {
+    borderRadius: radii.md,
+    backgroundColor: colors.warningSoft,
+    padding: spacing.md
+  },
+  limitReachedText: {
+    color: colors.warning,
+    fontSize: 13,
+    fontWeight: fontWeights.action
   },
   menuOverlay: {
     flex: 1,
