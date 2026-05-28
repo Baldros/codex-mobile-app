@@ -1,72 +1,65 @@
 import { router } from "expo-router";
-import { Archive, Check, MessageSquarePlus, Pencil, RefreshCcw, RotateCcw, Save, X } from "lucide-react-native";
+import { Check, RefreshCcw, RotateCcw, Trash2 } from "lucide-react-native";
 import React, { useMemo, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { IconAction } from "../components/IconAction";
 import { Screen } from "../components/Screen";
-import type { BridgeThread } from "../domain/bridge";
+import type { WorkspaceEntry } from "../domain/bridge";
 import { useBridge } from "../state/BridgeProvider";
 import { colors, radii, spacing } from "../theme/colors";
 import { fontWeights } from "../theme/typography";
-import { formatDateTime } from "../utils/format";
+import { compactPath } from "../utils/format";
 
-export function ConversationsScreen() {
+export function RepositoriesScreen() {
   const bridge = useBridge();
   const [search, setSearch] = useState("");
-  const [lastArchived, setLastArchived] = useState<BridgeThread | null>(null);
+  const [lastRemoved, setLastRemoved] = useState<WorkspaceEntry | null>(null);
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) {
-      return bridge.threads;
+      return bridge.workspaces;
     }
-    return bridge.threads.filter(
-      (thread) =>
-        thread.title.toLowerCase().includes(term) ||
-        thread.preview.toLowerCase().includes(term) ||
-        thread.id.toLowerCase().includes(term)
+    return bridge.workspaces.filter(
+      (workspace) =>
+        workspace.name.toLowerCase().includes(term) ||
+        workspace.path.toLowerCase().includes(term) ||
+        workspace.source.toLowerCase().includes(term)
     );
-  }, [bridge.threads, search]);
+  }, [bridge.workspaces, search]);
 
   return (
     <Screen>
       <View style={styles.header}>
         <View style={styles.titleWrap}>
-          <Text style={styles.title}>Conversations</Text>
+          <Text style={styles.title}>Repositories</Text>
           <Text numberOfLines={1} style={styles.subtitle}>
-            {bridge.selectedWorkspace?.name ?? "No repository"}
+            {bridge.allowlistFile ?? "Workspace allowlist"}
           </Text>
         </View>
-        <IconAction icon={RefreshCcw} label="Refresh" onPress={() => void bridge.refreshThreads()} />
-        <IconAction
-          icon={MessageSquarePlus}
-          label="New conversation"
-          variant="filled"
-          onPress={() => {
-            void bridge.createNewThread().then(() => router.back());
-          }}
-        />
+        <IconAction icon={RefreshCcw} label="Refresh" onPress={() => void bridge.refreshWorkspaces()} />
       </View>
 
       <TextInput
         value={search}
         onChangeText={setSearch}
-        placeholder="Search conversations"
+        placeholder="Search repositories"
         placeholderTextColor={colors.textSubtle}
         style={styles.search}
       />
 
-      {lastArchived ? (
+      {lastRemoved ? (
         <View style={styles.undoBand}>
           <Text numberOfLines={1} style={styles.undoText}>
-            Archived {lastArchived.title || "Untitled"}
+            Removed {lastRemoved.name} from the allowlist
           </Text>
           <Pressable
             accessibilityRole="button"
+            disabled={!bridge.capabilities.workspaces.restore}
             onPress={() => {
-              const archived = lastArchived;
-              setLastArchived(null);
-              void bridge.restoreThread(archived);
+              const removed = lastRemoved;
+              setLastRemoved(null);
+              void bridge.restoreWorkspace(removed.path);
             }}
             style={styles.undoButton}
           >
@@ -78,17 +71,17 @@ export function ConversationsScreen() {
 
       <FlatList
         data={filtered}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.path}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
-          <ConversationRow
-            thread={item}
-            onArchived={(thread) => setLastArchived(thread)}
+          <RepositoryRow
+            workspace={item}
+            onRemoved={(workspace) => setLastRemoved(workspace)}
           />
         )}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>No conversations</Text>
+            <Text style={styles.emptyTitle}>No repositories</Text>
           </View>
         }
       />
@@ -96,92 +89,47 @@ export function ConversationsScreen() {
   );
 }
 
-function ConversationRow({
-  thread,
-  onArchived
+function RepositoryRow({
+  workspace,
+  onRemoved
 }: {
-  thread: BridgeThread;
-  onArchived: (thread: BridgeThread) => void;
+  workspace: WorkspaceEntry;
+  onRemoved: (workspace: WorkspaceEntry) => void;
 }) {
   const bridge = useBridge();
-  const active = bridge.selectedThread?.id === thread.id;
-  const [renaming, setRenaming] = useState(false);
-  const [draft, setDraft] = useState(thread.title || "");
-  const canRename = bridge.capabilities.threads.rename;
-  const canArchive = bridge.capabilities.threads.archive;
-
-  if (renaming) {
-    return (
-      <View style={[styles.row, active && styles.rowActive]}>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          autoFocus
-          placeholder="Conversation title"
-          placeholderTextColor={colors.textSubtle}
-          style={styles.renameInput}
-        />
-        <IconAction
-          icon={Save}
-          label="Save title"
-          variant="filled"
-          disabled={!draft.trim()}
-          onPress={() => {
-            void bridge.renameThread(thread, draft).then((updated) => {
-              if (updated) {
-                setRenaming(false);
-              }
-            });
-          }}
-        />
-        <IconAction
-          icon={X}
-          label="Cancel rename"
-          onPress={() => {
-            setDraft(thread.title || "");
-            setRenaming(false);
-          }}
-        />
-      </View>
-    );
-  }
+  const active = bridge.selectedWorkspace?.path === workspace.path;
+  const removable = workspace.source === "file" && bridge.capabilities.workspaces.remove;
 
   return (
-    <View style={[styles.row, active && styles.rowActive]}>
+    <View style={[styles.row, active && styles.rowActive, !workspace.exists && styles.rowUnavailable]}>
       <Pressable
+        disabled={!workspace.exists}
         onPress={() => {
-          bridge.selectThread(thread);
-          router.back();
+          void bridge.selectWorkspace(workspace).then(() => router.back());
         }}
         style={({ pressed }) => [styles.rowBody, pressed && styles.rowPressed]}
       >
-        <Text numberOfLines={2} style={styles.rowTitle}>
-          {thread.title || "Untitled"}
+        <Text numberOfLines={1} style={styles.rowTitle}>
+          {workspace.name}
         </Text>
-        <Text numberOfLines={2} style={styles.rowPreview}>
-          {thread.preview || thread.id}
+        <Text numberOfLines={2} style={styles.rowPath}>
+          {compactPath(workspace.path, 58)}
         </Text>
         <Text numberOfLines={1} style={styles.rowMeta}>
-          {formatDateTime(thread.updated_at)} / {thread.source ?? "codex"}
+          {workspace.exists ? "Available" : "Missing"} / {workspace.source}
         </Text>
       </Pressable>
 
       <View style={styles.rowActions}>
         {active ? <Check size={20} color={colors.accent} /> : null}
         <IconAction
-          icon={Pencil}
-          label="Rename"
-          disabled={!canRename}
-          onPress={() => setRenaming(true)}
-        />
-        <IconAction
-          icon={Archive}
-          label="Archive"
-          disabled={!canArchive}
+          icon={Trash2}
+          label="Remove from allowlist"
+          disabled={!removable}
           onPress={() => {
-            void bridge.archiveThread(thread).then((result) => {
-              if (result?.supported && result.archived) {
-                onArchived(thread);
+            void bridge.removeWorkspace(workspace).then((result) => {
+              if (result?.supported && result.removed) {
+                onRemoved(workspace);
               }
             });
           }}
@@ -279,6 +227,9 @@ const styles = StyleSheet.create({
     borderColor: colors.accent,
     backgroundColor: colors.accentSoft
   },
+  rowUnavailable: {
+    opacity: 0.62
+  },
   rowPressed: {
     opacity: 0.8
   },
@@ -296,7 +247,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: fontWeights.action
   },
-  rowPreview: {
+  rowPath: {
     color: colors.textMuted,
     fontSize: 13,
     fontWeight: fontWeights.body,
@@ -308,18 +259,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: fontWeights.body,
     marginTop: 7
-  },
-  renameInput: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-    paddingHorizontal: spacing.md,
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: fontWeights.body
   },
   empty: {
     minHeight: 240,

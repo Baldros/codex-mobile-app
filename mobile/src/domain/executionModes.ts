@@ -17,8 +17,8 @@ type ExecutionSettings = Pick<
 export const EXECUTION_PRESETS: ExecutionPreset[] = [
   {
     id: "read-only",
-    label: "Leitura",
-    detail: "read-only · on-request",
+    label: "Read only",
+    detail: "read-only / on-request",
     sandboxMode: "read-only",
     approvalPolicy: "on-request",
     networkAccessEnabled: false
@@ -26,7 +26,7 @@ export const EXECUTION_PRESETS: ExecutionPreset[] = [
   {
     id: "workspace",
     label: "Workspace",
-    detail: "workspace-write · on-request",
+    detail: "workspace-write / on-request",
     sandboxMode: "workspace-write",
     approvalPolicy: "on-request",
     networkAccessEnabled: false
@@ -34,23 +34,23 @@ export const EXECUTION_PRESETS: ExecutionPreset[] = [
   {
     id: "workspace-online",
     label: "Workspace online",
-    detail: "workspace-write · network",
+    detail: "workspace-write / network",
     sandboxMode: "workspace-write",
     approvalPolicy: "on-request",
     networkAccessEnabled: true
   },
   {
     id: "full-assisted",
-    label: "Full assistido",
-    detail: "danger-full-access · on-request",
+    label: "Full assisted",
+    detail: "danger-full-access / on-request",
     sandboxMode: "danger-full-access",
     approvalPolicy: "on-request",
     networkAccessEnabled: false
   },
   {
     id: "full-auto",
-    label: "Full direto",
-    detail: "danger-full-access · never",
+    label: "Full direct",
+    detail: "danger-full-access / never",
     sandboxMode: "danger-full-access",
     approvalPolicy: "never",
     networkAccessEnabled: false
@@ -72,6 +72,6 @@ export function findExecutionPreset(settings: ExecutionSettings) {
 }
 
 export function executionDetail(settings: ExecutionSettings) {
-  const network = settings.networkAccessEnabled ? " · network" : "";
-  return `${settings.sandboxMode} · ${settings.approvalPolicy}${network}`;
+  const network = settings.networkAccessEnabled ? " / network" : "";
+  return `${settings.sandboxMode} / ${settings.approvalPolicy}${network}`;
 }

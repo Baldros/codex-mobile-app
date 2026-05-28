@@ -2,6 +2,7 @@ import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import { colors, radii } from "../theme/colors";
+import { fontWeights } from "../theme/typography";
 
 type StatusPillProps = {
   label: string;
@@ -35,7 +36,7 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: fontWeights.action,
     maxWidth: 150
   }
 });

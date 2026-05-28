@@ -20,6 +20,14 @@ export class WorkspaceService {
     return this.loadEntries();
   }
 
+  capabilities() {
+    const fileBacked = fs.existsSync(this.config.workspaceAllowlistFile);
+    return {
+      remove: fileBacked,
+      restore: fileBacked
+    };
+  }
+
   getAllowedRoots() {
     return this.loadEntries()
       .filter((entry) => entry.exists)
@@ -40,6 +48,83 @@ export class WorkspaceService {
     }
 
     return resolvedCandidate;
+  }
+
+  removeFromFileAllowlist(candidate: string) {
+    if (!fs.existsSync(this.config.workspaceAllowlistFile)) {
+      return {
+        supported: false,
+        removed: false,
+        path: path.resolve(candidate),
+        reason: "Workspace removal is only supported for file-based allowlists."
+      };
+    }
+
+    const resolvedCandidate = path.resolve(candidate);
+    const content = fs.readFileSync(this.config.workspaceAllowlistFile, "utf8");
+    const lines = splitPreservingLines(content);
+    let removed = false;
+    const nextLines = lines.filter((line) => {
+      const parsed = parseAllowlistLine(line.text);
+      if (!parsed) {
+        return true;
+      }
+
+      const resolved = path.resolve(this.config.defaultWorkspace, parsed);
+      if (samePath(resolved, resolvedCandidate)) {
+        removed = true;
+        return false;
+      }
+      return true;
+    });
+
+    if (removed) {
+      fs.writeFileSync(
+        this.config.workspaceAllowlistFile,
+        nextLines.map((line) => line.raw).join(""),
+        "utf8"
+      );
+    }
+
+    return {
+      supported: true,
+      removed,
+      path: resolvedCandidate
+    };
+  }
+
+  restoreToFileAllowlist(candidate: string) {
+    if (!fs.existsSync(this.config.workspaceAllowlistFile)) {
+      return {
+        supported: false,
+        restored: false,
+        path: path.resolve(candidate),
+        reason: "Workspace restore is only supported for file-based allowlists."
+      };
+    }
+
+    const resolvedCandidate = path.resolve(candidate);
+    const content = fs.readFileSync(this.config.workspaceAllowlistFile, "utf8");
+    const entries = parseAllowlistFile(content).map((entry) =>
+      path.resolve(this.config.defaultWorkspace, entry)
+    );
+
+    if (entries.some((entry) => samePath(entry, resolvedCandidate))) {
+      return {
+        supported: true,
+        restored: false,
+        path: resolvedCandidate
+      };
+    }
+
+    const prefix = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+    fs.appendFileSync(this.config.workspaceAllowlistFile, `${prefix}${resolvedCandidate}\n`, "utf8");
+
+    return {
+      supported: true,
+      restored: true,
+      path: resolvedCandidate
+    };
   }
 
   private loadEntries(): WorkspaceEntry[] {
@@ -88,8 +173,16 @@ export class WorkspaceService {
 export function parseAllowlistFile(content: string) {
   return content
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"));
+    .map(parseAllowlistLine)
+    .filter((line): line is string => line !== null);
+}
+
+function parseAllowlistLine(line: string) {
+  const trimmed = line.trim();
+  if (trimmed.length === 0 || trimmed.startsWith("#")) {
+    return null;
+  }
+  return trimmed;
 }
 
 function isDirectory(candidate: string) {
@@ -106,4 +199,18 @@ function isGitRepository(candidate: string) {
 
 function normalizePath(candidate: string) {
   return process.platform === "win32" ? candidate.toLowerCase() : candidate;
+}
+
+function samePath(left: string, right: string) {
+  return normalizePath(path.resolve(left)) === normalizePath(path.resolve(right));
+}
+
+function splitPreservingLines(content: string) {
+  const matches = content.match(/[^\r\n]*(?:\r\n|\n|\r|$)/g) ?? [];
+  return matches
+    .filter((line) => line.length > 0)
+    .map((raw) => ({
+      raw,
+      text: raw.replace(/[\r\n]+$/, "")
+    }));
 }

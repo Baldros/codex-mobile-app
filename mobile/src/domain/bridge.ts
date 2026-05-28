@@ -17,6 +17,17 @@ export type WorkspaceEntry = {
   source: "file" | "env" | "fallback" | string;
 };
 
+export type BridgeCapabilities = {
+  threads: {
+    rename: boolean;
+    archive: boolean;
+  };
+  workspaces: {
+    remove: boolean;
+    restore: boolean;
+  };
+};
+
 export type BridgeThread = {
   id: string;
   session_id?: string;
@@ -31,6 +42,14 @@ export type BridgeThread = {
   source?: string;
   path?: string | null;
   turns?: unknown[];
+};
+
+export type ThreadArchiveResponse = {
+  supported: boolean;
+  archived: boolean;
+  thread_id: string;
+  reason?: string;
+  thread?: BridgeThread | null;
 };
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -154,6 +173,14 @@ export type PendingApproval = {
   command?: string | string[] | null;
   cwd?: string | null;
   available_decisions?: string[];
+};
+
+export type WorkspaceMutationResponse = {
+  supported: boolean;
+  removed?: boolean;
+  restored?: boolean;
+  path: string;
+  reason?: string;
 };
 
 export type BridgePreferences = {

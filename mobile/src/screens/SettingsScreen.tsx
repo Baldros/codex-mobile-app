@@ -15,6 +15,7 @@ import {
 } from "../domain/executionModes";
 import { useBridge } from "../state/BridgeProvider";
 import { colors, radii, spacing } from "../theme/colors";
+import { fontWeights } from "../theme/typography";
 
 const fallbackEfforts: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
 
@@ -45,21 +46,21 @@ export function SettingsScreen() {
         </View>
         <IconAction
           icon={Save}
-          label="Salvar URL"
+          label="Save URL"
           variant="filled"
           onPress={() => {
             bridge.setBaseUrl(baseUrlDraft);
             void bridge.refreshAll();
           }}
         />
-        <IconAction icon={X} label="Fechar" onPress={() => router.back()} />
+        <IconAction icon={X} label="Close" onPress={() => router.back()} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Modo de execucao</Text>
+          <Text style={styles.sectionTitle}>Execution Mode</Text>
           <InfoRow
-            label={activeExecutionPreset?.label ?? "Personalizado"}
+            label={activeExecutionPreset?.label ?? "Custom"}
             value={executionDetail({
               sandboxMode: bridge.sandboxMode,
               approvalPolicy: bridge.approvalPolicy,
@@ -114,7 +115,7 @@ export function SettingsScreen() {
             autoCorrect={false}
             style={styles.input}
           />
-          <InfoRow label="Status" value={bridge.health?.status ?? "sem resposta"} />
+          <InfoRow label="Status" value={bridge.health?.status ?? "no response"} />
           <InfoRow label="Auth" value={bridge.health?.auth ?? "-"} />
           <InfoRow label="CLI" value={bridge.health?.codex_cli_version ?? "-"} />
           <InfoRow label="Allowlist" value={bridge.allowlistFile ?? "-"} />
@@ -152,7 +153,7 @@ export function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Avancado</Text>
+          <Text style={styles.sectionTitle}>Advanced</Text>
           <OptionGrid
             title="Approval"
             options={approvalPolicies}
@@ -172,8 +173,8 @@ export function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Modelo</Text>
-          <InfoRow label="Atual" value={selectedModel?.displayName ?? bridge.selectedModelId ?? "-"} />
+          <Text style={styles.sectionTitle}>Model</Text>
+          <InfoRow label="Current" value={selectedModel?.displayName ?? bridge.selectedModelId ?? "-"} />
           <OptionGrid
             title="Reasoning effort"
             options={efforts}
@@ -192,7 +193,7 @@ export function SettingsScreen() {
             style={({ pressed }) => [styles.saveDefaults, pressed && styles.pressed]}
             onPress={() => void bridge.saveCodexDefaults()}
           >
-            <Text style={styles.saveDefaultsText}>Salvar defaults no Codex</Text>
+            <Text style={styles.saveDefaultsText}>Save defaults to Codex</Text>
           </Pressable>
         </View>
 
@@ -277,11 +278,12 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: 22,
-    fontWeight: "800"
+    fontWeight: fontWeights.title
   },
   subtitle: {
     color: colors.textMuted,
     fontSize: 12,
+    fontWeight: fontWeights.body,
     marginTop: 2
   },
   content: {
@@ -298,7 +300,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     color: colors.text,
     fontSize: 15,
-    fontWeight: "800",
+    fontWeight: fontWeights.action,
     marginBottom: spacing.sm
   },
   input: {
@@ -310,6 +312,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     color: colors.text,
     fontSize: 14,
+    fontWeight: fontWeights.body,
     marginBottom: spacing.sm
   },
   infoRow: {
@@ -321,13 +324,13 @@ const styles = StyleSheet.create({
   infoLabel: {
     color: colors.textSubtle,
     fontSize: 11,
-    fontWeight: "800",
+    fontWeight: fontWeights.label,
     textTransform: "uppercase"
   },
   infoValue: {
     color: colors.text,
     fontSize: 13,
-    fontWeight: "600"
+    fontWeight: fontWeights.subtitle
   },
   optionBlock: {
     marginTop: spacing.sm
@@ -335,7 +338,7 @@ const styles = StyleSheet.create({
   optionTitle: {
     color: colors.textMuted,
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: fontWeights.label,
     marginBottom: 7
   },
   options: {
@@ -359,7 +362,7 @@ const styles = StyleSheet.create({
   optionText: {
     color: colors.textMuted,
     fontSize: 12,
-    fontWeight: "800"
+    fontWeight: fontWeights.action
   },
   optionTextActive: {
     color: colors.accent
@@ -386,7 +389,7 @@ const styles = StyleSheet.create({
   presetLabel: {
     color: colors.text,
     fontSize: 13,
-    fontWeight: "800"
+    fontWeight: fontWeights.action
   },
   presetLabelActive: {
     color: colors.accent
@@ -394,6 +397,7 @@ const styles = StyleSheet.create({
   presetDetail: {
     color: colors.textMuted,
     fontSize: 11,
+    fontWeight: fontWeights.body,
     lineHeight: 15,
     marginTop: 4
   },
@@ -410,7 +414,7 @@ const styles = StyleSheet.create({
   switchLabel: {
     color: colors.text,
     fontSize: 14,
-    fontWeight: "800"
+    fontWeight: fontWeights.action
   },
   saveDefaults: {
     minHeight: 42,
@@ -423,7 +427,7 @@ const styles = StyleSheet.create({
   saveDefaultsText: {
     color: "#FFFFFF",
     fontSize: 13,
-    fontWeight: "800"
+    fontWeight: fontWeights.action
   },
   pressed: {
     opacity: 0.85

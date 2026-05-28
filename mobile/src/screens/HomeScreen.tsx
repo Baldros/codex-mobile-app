@@ -1,21 +1,24 @@
 import { router } from "expo-router";
 import {
   Bot,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   FolderGit2,
   Gauge,
   ListTree,
+  Menu,
   MessageSquarePlus,
   RefreshCcw,
   Send,
-  ShieldCheck,
   Settings,
   Square,
   Terminal,
-  X
+  X,
+  Zap
 } from "lucide-react-native";
 import React, { useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -29,46 +32,29 @@ import {
 } from "react-native";
 
 import { IconAction } from "../components/IconAction";
-import { PillButton } from "../components/PillButton";
 import { Screen } from "../components/Screen";
 import { StatusPill } from "../components/StatusPill";
-import type {
-  ChatMessage,
-  CodexAccountResponse,
-  PendingApproval,
-  RateLimitSnapshot,
-  RateLimitWindow
-} from "../domain/bridge";
-import { EXECUTION_PRESETS, executionDetail, findExecutionPreset } from "../domain/executionModes";
+import {
+  effortsForModel,
+  fastTierOptionsForModel,
+  isServiceTierAvailable,
+  type FastTierOption
+} from "../domain/composerOptions";
+import type { ChatMessage, CodexModel, PendingApproval, ReasoningEffort } from "../domain/bridge";
 import { useBridge } from "../state/BridgeProvider";
 import { colors, radii, spacing } from "../theme/colors";
+import { fontWeights } from "../theme/typography";
 import { compactPath } from "../utils/format";
 
-const fallbackEfforts = ["low", "medium", "high", "xhigh"] as const;
+type MenuPanel = "main" | "models" | "effort" | "fast";
 
 export function HomeScreen() {
   const bridge = useBridge();
   const [draft, setDraft] = useState("");
-  const [limitsVisible, setLimitsVisible] = useState(false);
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
     [bridge.models, bridge.selectedModelId]
   );
-  const effortOptions = selectedModel?.supportedReasoningEfforts?.map((item) => item.reasoningEffort);
-  const efforts = effortOptions && effortOptions.length > 0 ? effortOptions : [...fallbackEfforts];
-  const activeExecutionPreset = findExecutionPreset({
-    sandboxMode: bridge.sandboxMode,
-    approvalPolicy: bridge.approvalPolicy,
-    networkAccessEnabled: bridge.networkAccessEnabled
-  });
-  const currentExecutionDetail =
-    activeExecutionPreset?.detail ??
-    executionDetail({
-      sandboxMode: bridge.sandboxMode,
-      approvalPolicy: bridge.approvalPolicy,
-      networkAccessEnabled: bridge.networkAccessEnabled
-    });
-
   const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
 
   return (
@@ -81,18 +67,17 @@ export function HomeScreen() {
           <View style={styles.titleWrap}>
             <Text style={styles.appTitle}>Codex Mobile</Text>
             <Text numberOfLines={1} style={styles.subtitle}>
-              {bridge.selectedWorkspace ? compactPath(bridge.selectedWorkspace.path) : "Sem repositorio"}
+              {bridge.selectedWorkspace ? compactPath(bridge.selectedWorkspace.path) : "No repository"}
             </Text>
           </View>
           <StatusPill
             label={bridge.health?.codex_ready ? "online" : "offline"}
             tone={bridge.health?.codex_ready ? "ok" : bridge.error ? "error" : "warn"}
           />
-          <IconAction icon={RefreshCcw} label="Atualizar" onPress={() => void bridge.refreshAll()} />
+          <IconAction icon={FolderGit2} label="Repositories" onPress={() => router.push("/repositories")} />
+          <IconAction icon={RefreshCcw} label="Refresh" onPress={() => void bridge.refreshAll()} />
           <IconAction icon={Settings} label="Settings" onPress={() => router.push("/settings")} />
         </View>
-
-        <LimitsModal visible={limitsVisible} onClose={() => setLimitsVisible(false)} />
 
         {bridge.error ? (
           <View style={styles.errorBand}>
@@ -102,127 +87,19 @@ export function HomeScreen() {
           </View>
         ) : null}
 
-        <View style={styles.selectorBlock}>
-          <View style={styles.selectorHeader}>
-            <FolderGit2 size={16} color={colors.textMuted} />
-            <Text style={styles.selectorTitle}>Repositorio</Text>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {bridge.workspaces.map((workspace) => (
-              <PillButton
-                key={workspace.path}
-                label={workspace.name}
-                detail={workspace.exists ? compactPath(workspace.path, 32) : "indisponivel"}
-                selected={bridge.selectedWorkspace?.path === workspace.path}
-                disabled={!workspace.exists}
-                onPress={() => void bridge.selectWorkspace(workspace)}
-              />
-            ))}
-          </ScrollView>
-        </View>
-
-        <View style={styles.selectorBlock}>
-          <View style={styles.selectorHeader}>
-            <Bot size={16} color={colors.textMuted} />
-            <Text style={styles.selectorTitle}>Modelo</Text>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {bridge.models.map((model) => (
-              <PillButton
-                key={model.id}
-                label={model.displayName ?? model.id}
-                detail={model.defaultReasoningEffort ?? model.description ?? model.model}
-                selected={bridge.selectedModelId === model.id}
-                onPress={() => bridge.setSelectedModelId(model.id)}
-              />
-            ))}
-          </ScrollView>
-        </View>
-
         <View style={styles.threadBar}>
           <Pressable style={styles.threadButton} onPress={() => router.push("/conversations")}>
             <ListTree size={18} color={colors.text} />
             <View style={styles.threadTextWrap}>
               <Text numberOfLines={1} style={styles.threadTitle}>
-                {bridge.selectedThread?.title ?? "Nova conversa"}
+                {bridge.selectedThread?.title ?? "New conversation"}
               </Text>
               <Text numberOfLines={1} style={styles.threadSubtitle}>
-                {bridge.threads.length} no historico deste repositorio
+                {bridge.threads.length} conversations in this repository
               </Text>
             </View>
           </Pressable>
-          <IconAction icon={MessageSquarePlus} label="Nova conversa" onPress={() => void bridge.createNewThread()} />
-        </View>
-
-        <View style={styles.selectorBlock}>
-          <View style={styles.selectorHeader}>
-            <ShieldCheck size={16} color={colors.textMuted} />
-            <Text style={styles.selectorTitle}>Modo de execucao</Text>
-            <Text numberOfLines={1} style={styles.selectorMeta}>
-              {activeExecutionPreset?.label ?? "Personalizado"}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Limits"
-              onPress={() => {
-                setLimitsVisible(true);
-                void bridge.refreshAccount();
-              }}
-              style={({ pressed }) => [styles.limitsButton, pressed && styles.limitsButtonPressed]}
-            >
-              <Gauge size={16} color={colors.text} />
-              <Text style={styles.limitsButtonText}>Limits</Text>
-            </Pressable>
-          </View>
-          <Text numberOfLines={1} style={styles.executionSummary}>
-            {currentExecutionDetail}
-          </Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            {EXECUTION_PRESETS.map((preset) => (
-              <PillButton
-                key={preset.id}
-                label={preset.label}
-                detail={preset.detail}
-                selected={activeExecutionPreset?.id === preset.id}
-                onPress={() =>
-                  bridge.setExecutionSettings({
-                    sandboxMode: preset.sandboxMode,
-                    approvalPolicy: preset.approvalPolicy,
-                    networkAccessEnabled: preset.networkAccessEnabled
-                  })
-                }
-              />
-            ))}
-          </ScrollView>
-        </View>
-
-        <View style={styles.selectorBlock}>
-          <View style={styles.selectorHeader}>
-            <Gauge size={16} color={colors.textMuted} />
-            <Text style={styles.selectorTitle}>Esforco</Text>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.effortRow}
-          >
-            {efforts.map((effort) => (
-              <Pressable
-                key={effort}
-                onPress={() => bridge.setReasoningEffort(effort)}
-                style={[styles.effortChip, bridge.reasoningEffort === effort && styles.effortChipActive]}
-              >
-                <Text
-                  style={[
-                    styles.effortChipText,
-                    bridge.reasoningEffort === effort && styles.effortChipTextActive
-                  ]}
-                >
-                  {effort}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
+          <IconAction icon={MessageSquarePlus} label="New conversation" onPress={() => void bridge.createNewThread()} />
         </View>
 
         {bridge.activities.length > 0 ? (
@@ -259,20 +136,21 @@ export function HomeScreen() {
         />
 
         <View style={styles.composer}>
+          <ComposerMenu selectedModel={selectedModel} />
           <TextInput
             value={draft}
             onChangeText={setDraft}
             multiline
-            placeholder="Mensagem para o Codex"
+            placeholder="Message Codex"
             placeholderTextColor={colors.textSubtle}
             style={styles.input}
           />
           {bridge.isRunning ? (
-            <IconAction icon={Square} label="Cancelar" variant="danger" onPress={() => void bridge.cancelRun()} />
+            <IconAction icon={Square} label="Cancel" variant="danger" onPress={() => void bridge.cancelRun()} />
           ) : (
             <IconAction
               icon={Send}
-              label="Enviar"
+              label="Send"
               variant="filled"
               disabled={!canSend}
               onPress={() => {
@@ -288,113 +166,255 @@ export function HomeScreen() {
   );
 }
 
-function LimitsModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+function ComposerMenu({ selectedModel }: { selectedModel: CodexModel | null }) {
   const bridge = useBridge();
-  const limits = getCodexLimits(bridge.account);
-  const account = bridge.account?.account ?? null;
-  const planType = limits?.planType ?? account?.planType ?? null;
-  const subtitle = [account?.email, planType ? planTypeLabel(planType) : null]
-    .filter((item): item is string => Boolean(item))
-    .join(" / ");
-  const credits = limits?.credits ?? null;
+  const [visible, setVisible] = useState(false);
+  const [panel, setPanel] = useState<MenuPanel>("main");
+  const efforts = effortsForModel(selectedModel);
+  const fastTiers = fastTierOptionsForModel(selectedModel);
+  const currentFastTier = fastTiers.find((tier) => tier.id === bridge.serviceTier) ?? null;
+  const fastEnabled = fastTiers.length > 0;
+
+  const close = () => {
+    setVisible(false);
+    setPanel("main");
+  };
 
   return (
-    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.limitsModal}>
-          <View style={styles.limitsHeader}>
-            <View style={styles.limitsTitleWrap}>
-              <Text style={styles.limitsTitle}>Limits</Text>
-              <Text numberOfLines={1} style={styles.limitsSubtitle}>
-                {subtitle || "Conta Codex"}
-              </Text>
-            </View>
-            <IconAction
-              icon={RefreshCcw}
-              label="Atualizar limits"
-              disabled={bridge.isRefreshingAccount}
-              onPress={() => void bridge.refreshAccount()}
-            />
-            <IconAction icon={X} label="Fechar limits" onPress={onClose} />
-          </View>
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Composer options"
+        onPress={() => setVisible(true)}
+        style={({ pressed }) => [styles.composerMenuButton, pressed && styles.composerMenuButtonPressed]}
+      >
+        <Menu size={21} color={colors.text} />
+      </Pressable>
 
-          {bridge.isRefreshingAccount ? (
-            <View style={styles.limitsLoading}>
-              <ActivityIndicator color={colors.accent} />
-              <Text style={styles.limitsLoadingText}>Atualizando limits...</Text>
+      <Modal transparent visible={visible} animationType="fade" onRequestClose={close}>
+        <Pressable style={styles.menuOverlay} onPress={close}>
+          <Pressable style={styles.menuPanel} onPress={(event) => event.stopPropagation()}>
+            <View style={styles.menuHeader}>
+              {panel === "main" ? (
+                <View style={styles.menuTitleIcon}>
+                  <Menu size={18} color={colors.text} />
+                </View>
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Back"
+                  onPress={() => setPanel("main")}
+                  style={styles.menuBackButton}
+                >
+                  <ChevronLeft size={20} color={colors.text} />
+                </Pressable>
+              )}
+              <Text style={styles.menuTitle}>{panelTitle(panel)}</Text>
+              <IconAction icon={X} label="Close menu" onPress={close} />
             </View>
-          ) : null}
 
-          {bridge.accountError ? (
-            <View style={styles.limitsError}>
-              <Text style={styles.limitsErrorText}>{bridge.accountError}</Text>
-            </View>
-          ) : null}
+            {panel === "main" ? (
+              <View style={styles.menuItems}>
+                <MenuItem
+                  icon={<Bot size={18} color={colors.textMuted} />}
+                  label="Models"
+                  detail={selectedModel?.displayName ?? bridge.selectedModelId ?? "Default"}
+                  onPress={() => setPanel("models")}
+                  showChevron
+                />
+                <MenuItem
+                  icon={<Gauge size={18} color={colors.textMuted} />}
+                  label="Effort"
+                  detail={bridge.reasoningEffort}
+                  onPress={() => setPanel("effort")}
+                  showChevron
+                />
+                <MenuItem
+                  icon={<Zap size={18} color={fastEnabled ? colors.textMuted : colors.textSubtle} />}
+                  label="Fast"
+                  detail={currentFastTier?.label ?? (fastEnabled ? "Off" : "Unavailable")}
+                  disabled={!fastEnabled}
+                  onPress={() => setPanel("fast")}
+                  showChevron
+                />
+                <MenuItem
+                  icon={<ListTree size={18} color={colors.textSubtle} />}
+                  label="Plan"
+                  detail="Unavailable"
+                  disabled
+                  onPress={() => undefined}
+                />
+              </View>
+            ) : null}
 
-          {limits ? (
-            <View style={styles.limitMeters}>
-              <LimitMeter label="5h" limitWindow={limits.primary} />
-              <LimitMeter label="Weekly" limitWindow={limits.secondary} />
-            </View>
-          ) : bridge.isRefreshingAccount ? null : (
-            <View style={styles.limitsEmpty}>
-              <Text style={styles.limitsEmptyTitle}>Limits indisponiveis</Text>
-              <Text style={styles.limitsEmptyText}>
-                O bridge ainda nao recebeu dados de rate limit desta conta.
-              </Text>
-            </View>
-          )}
+            {panel === "models" ? (
+              <ScrollView style={styles.optionList}>
+                {bridge.models.map((model) => (
+                  <SelectableItem
+                    key={model.id}
+                    label={model.displayName ?? model.id}
+                    detail={model.defaultReasoningEffort ?? model.description ?? model.model}
+                    selected={bridge.selectedModelId === model.id}
+                    onPress={() => {
+                      bridge.setSelectedModelId(model.id);
+                      if (!isServiceTierAvailable(model, bridge.serviceTier)) {
+                        bridge.setServiceTier(null);
+                      }
+                      close();
+                    }}
+                  />
+                ))}
+              </ScrollView>
+            ) : null}
 
-          {credits ? (
-            <View style={styles.creditsRow}>
-              <Text style={styles.creditsLabel}>Credits</Text>
-              <Text style={styles.creditsValue}>{creditsLabel(credits)}</Text>
-            </View>
-          ) : null}
+            {panel === "effort" ? (
+              <View style={styles.menuItems}>
+                {efforts.map((effort) => (
+                  <SelectableItem
+                    key={effort}
+                    label={effort}
+                    selected={bridge.reasoningEffort === effort}
+                    onPress={() => {
+                      bridge.setReasoningEffort(effort as ReasoningEffort);
+                      close();
+                    }}
+                  />
+                ))}
+              </View>
+            ) : null}
 
-          {limits?.rateLimitReachedType ? (
-            <View style={styles.limitReached}>
-              <Text style={styles.limitReachedText}>{limitReachedLabel(limits.rateLimitReachedType)}</Text>
-            </View>
-          ) : null}
-        </View>
-      </View>
-    </Modal>
+            {panel === "fast" ? (
+              <View style={styles.menuItems}>
+                <SelectableItem
+                  label="Off"
+                  detail="Use the model default tier"
+                  selected={!bridge.serviceTier}
+                  onPress={() => {
+                    bridge.setServiceTier(null);
+                    close();
+                  }}
+                />
+                {fastTiers.length > 0 ? (
+                  fastTiers.map((tier) => (
+                    <FastTierItem
+                      key={tier.id}
+                      tier={tier}
+                      selected={bridge.serviceTier === tier.id}
+                      onPress={() => {
+                        bridge.setServiceTier(tier.id);
+                        close();
+                      }}
+                    />
+                  ))
+                ) : (
+                  <SelectableItem label="No speed tiers" detail="Unavailable for this model" disabled />
+                )}
+              </View>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
   );
 }
 
-function LimitMeter({ label, limitWindow }: { label: string; limitWindow: RateLimitWindow | null }) {
-  if (!limitWindow) {
-    return (
-      <View style={styles.limitMeter}>
-        <View style={styles.limitMeterHeader}>
-          <Text style={styles.limitMeterTitle}>{label}</Text>
-          <Text style={styles.limitUnavailable}>Sem dados</Text>
-        </View>
-      </View>
-    );
-  }
-
-  const usedPercent = clampPercent(limitWindow.usedPercent);
-  const remainingPercent = Math.max(0, 100 - usedPercent);
-
+function MenuItem({
+  icon,
+  label,
+  detail,
+  disabled = false,
+  showChevron = false,
+  onPress
+}: {
+  icon: React.ReactNode;
+  label: string;
+  detail?: string | null | undefined;
+  disabled?: boolean;
+  showChevron?: boolean;
+  onPress: () => void;
+}) {
   return (
-    <View style={styles.limitMeter}>
-      <View style={styles.limitMeterHeader}>
-        <View>
-          <Text style={styles.limitMeterTitle}>{label}</Text>
-          <Text style={styles.limitMeterSubtitle}>{windowDurationLabel(limitWindow.windowDurationMins)}</Text>
-        </View>
-        <View style={styles.limitPercentWrap}>
-          <Text style={styles.limitRemaining}>{formatPercent(remainingPercent)} disponivel</Text>
-          <Text style={styles.limitUsed}>{formatPercent(usedPercent)} usado</Text>
-        </View>
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.menuItem,
+        disabled && styles.menuItemDisabled,
+        pressed && !disabled && styles.menuItemPressed
+      ]}
+    >
+      {icon}
+      <View style={styles.menuItemText}>
+        <Text style={[styles.menuItemLabel, disabled && styles.mutedText]}>{label}</Text>
+        {detail ? (
+          <Text numberOfLines={1} style={[styles.menuItemDetail, disabled && styles.mutedText]}>
+            {detail}
+          </Text>
+        ) : null}
       </View>
-      <View style={styles.limitBarTrack}>
-        <View style={[styles.limitBarFill, { width: `${usedPercent}%` }]} />
+      {showChevron ? <ChevronRight size={18} color={disabled ? colors.textSubtle : colors.textMuted} /> : null}
+    </Pressable>
+  );
+}
+
+function SelectableItem({
+  label,
+  detail,
+  selected = false,
+  disabled = false,
+  onPress = () => undefined
+}: {
+  label: string;
+  detail?: string | null | undefined;
+  selected?: boolean;
+  disabled?: boolean;
+  onPress?: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.selectable,
+        selected && styles.selectableActive,
+        disabled && styles.menuItemDisabled,
+        pressed && !disabled && styles.menuItemPressed
+      ]}
+    >
+      <View style={styles.menuItemText}>
+        <Text numberOfLines={1} style={[styles.selectableLabel, selected && styles.selectableLabelActive]}>
+          {label}
+        </Text>
+        {detail ? (
+          <Text numberOfLines={1} style={styles.menuItemDetail}>
+            {detail}
+          </Text>
+        ) : null}
       </View>
-      <Text style={styles.limitReset}>{resetLabel(limitWindow.resetsAt)}</Text>
-    </View>
+      {selected ? <Check size={18} color={colors.accent} /> : null}
+    </Pressable>
+  );
+}
+
+function FastTierItem({
+  tier,
+  selected,
+  onPress
+}: {
+  tier: FastTierOption;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <SelectableItem
+      label={tier.label}
+      detail={tier.description ?? tier.id}
+      selected={selected}
+      disabled={!tier.available}
+      onPress={onPress}
+    />
   );
 }
 
@@ -404,11 +424,11 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
       <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
         <Text style={[styles.messageRole, isUser && styles.userRole]}>
-          {isUser ? "Voce" : "Codex"}
+          {isUser ? "You" : "Codex"}
           {message.pending ? " ." : ""}
         </Text>
         <Text style={[styles.messageText, isUser && styles.userText]}>
-          {message.text || "Processando..."}
+          {message.text || "Working..."}
         </Text>
       </View>
     </View>
@@ -421,7 +441,7 @@ function ApprovalPanel({ approval }: { approval: PendingApproval }) {
 
   return (
     <View style={styles.approvalPanel}>
-      <Text style={styles.approvalTitle}>Aprovacao pendente</Text>
+      <Text style={styles.approvalTitle}>Approval pending</Text>
       <Text numberOfLines={2} style={styles.approvalDetail}>
         {Array.isArray(approval.command) ? approval.command.join(" ") : approval.command ?? approval.reason ?? approval.method}
       </Text>
@@ -453,74 +473,23 @@ function ApprovalPanel({ approval }: { approval: PendingApproval }) {
 function EmptyChat() {
   return (
     <View style={styles.empty}>
-      <Text style={styles.emptyTitle}>Pronto</Text>
-      <Text style={styles.emptyText}>Selecione repositorio, modelo e conversa.</Text>
+      <Text style={styles.emptyTitle}>Ready</Text>
+      <Text style={styles.emptyText}>Choose a repository and start a conversation.</Text>
     </View>
   );
 }
 
-function getCodexLimits(account: CodexAccountResponse | null): RateLimitSnapshot | null {
-  return account?.rateLimits?.rateLimitsByLimitId?.codex ?? account?.rateLimits?.rateLimits ?? null;
-}
-
-function clampPercent(value: number) {
-  if (!Number.isFinite(value)) {
-    return 0;
+function panelTitle(panel: MenuPanel) {
+  switch (panel) {
+    case "models":
+      return "Models";
+    case "effort":
+      return "Effort";
+    case "fast":
+      return "Fast";
+    default:
+      return "Options";
   }
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function formatPercent(value: number) {
-  return `${clampPercent(value)}%`;
-}
-
-function windowDurationLabel(minutes: number | null) {
-  if (minutes === 300) {
-    return "Janela de 5h";
-  }
-  if (minutes === 10080) {
-    return "Janela weekly";
-  }
-  if (!minutes) {
-    return "Janela atual";
-  }
-  if (minutes % 60 === 0) {
-    return `Janela de ${minutes / 60}h`;
-  }
-  return `Janela de ${minutes} min`;
-}
-
-function resetLabel(resetsAt: number | null) {
-  if (!resetsAt) {
-    return "Reset nao informado";
-  }
-
-  const milliseconds = resetsAt > 10_000_000_000 ? resetsAt : resetsAt * 1000;
-  const formatted = new Date(milliseconds).toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
-  return `Reset ${formatted}`;
-}
-
-function planTypeLabel(planType: string) {
-  return planType.replace(/_/g, " ");
-}
-
-function creditsLabel(credits: NonNullable<RateLimitSnapshot["credits"]>) {
-  if (credits.unlimited) {
-    return "Ilimitados";
-  }
-  if (credits.balance) {
-    return credits.balance;
-  }
-  return credits.hasCredits ? "Ativos" : "Indisponiveis";
-}
-
-function limitReachedLabel(rateLimitReachedType: string) {
-  return rateLimitReachedType.replace(/_/g, " ");
 }
 
 const styles = StyleSheet.create({
@@ -543,12 +512,13 @@ const styles = StyleSheet.create({
   appTitle: {
     color: colors.text,
     fontSize: 22,
-    fontWeight: "800",
+    fontWeight: fontWeights.title,
     letterSpacing: 0
   },
   subtitle: {
     color: colors.textMuted,
     fontSize: 12,
+    fontWeight: fontWeights.body,
     marginTop: 2
   },
   errorBand: {
@@ -561,220 +531,7 @@ const styles = StyleSheet.create({
   errorText: {
     color: colors.danger,
     fontSize: 13,
-    fontWeight: "600"
-  },
-  selectorBlock: {
-    paddingLeft: spacing.lg,
-    paddingRight: spacing.sm,
-    paddingBottom: spacing.sm
-  },
-  selectorHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 7
-  },
-  selectorTitle: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "uppercase"
-  },
-  selectorMeta: {
-    flex: 1,
-    minWidth: 0,
-    color: colors.textSubtle,
-    fontSize: 12,
-    fontWeight: "700",
-    textAlign: "right"
-  },
-  limitsButton: {
-    minHeight: 32,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    paddingHorizontal: spacing.sm,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6
-  },
-  limitsButtonPressed: {
-    opacity: 0.82
-  },
-  limitsButtonText: {
-    color: colors.text,
-    fontSize: 12,
-    fontWeight: "800"
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(16, 24, 40, 0.38)",
-    justifyContent: "center",
-    padding: spacing.lg
-  },
-  limitsModal: {
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    padding: spacing.md,
-    gap: spacing.md
-  },
-  limitsHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm
-  },
-  limitsTitleWrap: {
-    flex: 1,
-    minWidth: 0
-  },
-  limitsTitle: {
-    color: colors.text,
-    fontSize: 20,
-    fontWeight: "800"
-  },
-  limitsSubtitle: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginTop: 2
-  },
-  limitsLoading: {
-    minHeight: 38,
-    borderRadius: radii.md,
-    backgroundColor: colors.accentSoft,
-    paddingHorizontal: spacing.md,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm
-  },
-  limitsLoadingText: {
-    color: colors.accent,
-    fontSize: 13,
-    fontWeight: "800"
-  },
-  limitsError: {
-    borderRadius: radii.md,
-    backgroundColor: colors.dangerSoft,
-    padding: spacing.md
-  },
-  limitsErrorText: {
-    color: colors.danger,
-    fontSize: 13,
-    fontWeight: "700"
-  },
-  limitMeters: {
-    gap: spacing.sm
-  },
-  limitMeter: {
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-    padding: spacing.md
-  },
-  limitMeterHeader: {
-    minHeight: 40,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: spacing.md
-  },
-  limitMeterTitle: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: "800"
-  },
-  limitMeterSubtitle: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginTop: 2
-  },
-  limitPercentWrap: {
-    alignItems: "flex-end"
-  },
-  limitRemaining: {
-    color: colors.success,
-    fontSize: 14,
-    fontWeight: "800"
-  },
-  limitUsed: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginTop: 2
-  },
-  limitBarTrack: {
-    height: 8,
-    borderRadius: radii.sm,
-    backgroundColor: colors.surfaceMuted,
-    overflow: "hidden",
-    marginTop: spacing.md
-  },
-  limitBarFill: {
-    height: 8,
-    borderRadius: radii.sm,
-    backgroundColor: colors.accent
-  },
-  limitReset: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginTop: spacing.sm
-  },
-  limitUnavailable: {
-    color: colors.textMuted,
-    fontSize: 13,
-    fontWeight: "700"
-  },
-  limitsEmpty: {
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceMuted,
-    padding: spacing.md
-  },
-  limitsEmptyTitle: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "800"
-  },
-  limitsEmptyText: {
-    color: colors.textMuted,
-    fontSize: 13,
-    marginTop: 4,
-    lineHeight: 18
-  },
-  creditsRow: {
-    minHeight: 42,
-    borderTopWidth: 1,
-    borderTopColor: colors.surfaceMuted,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md
-  },
-  creditsLabel: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "uppercase"
-  },
-  creditsValue: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: "800"
-  },
-  limitReached: {
-    borderRadius: radii.md,
-    backgroundColor: colors.warningSoft,
-    padding: spacing.md
-  },
-  limitReachedText: {
-    color: colors.warning,
-    fontSize: 13,
-    fontWeight: "800"
-  },
-  executionSummary: {
-    color: colors.textMuted,
-    fontSize: 12,
-    marginBottom: spacing.sm
+    fontWeight: fontWeights.subtitle
   },
   threadBar: {
     marginHorizontal: spacing.lg,
@@ -802,40 +559,13 @@ const styles = StyleSheet.create({
   threadTitle: {
     color: colors.text,
     fontSize: 14,
-    fontWeight: "800"
+    fontWeight: fontWeights.action
   },
   threadSubtitle: {
     color: colors.textMuted,
     fontSize: 12,
+    fontWeight: fontWeights.body,
     marginTop: 2
-  },
-  effortRow: {
-    paddingRight: spacing.sm,
-    paddingBottom: spacing.sm,
-    gap: spacing.sm
-  },
-  effortChip: {
-    height: 32,
-    minWidth: 66,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.md
-  },
-  effortChipActive: {
-    backgroundColor: colors.accentSoft,
-    borderColor: colors.accent
-  },
-  effortChipText: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: "800"
-  },
-  effortChipTextActive: {
-    color: colors.accent
   },
   activityRail: {
     marginHorizontal: spacing.lg,
@@ -856,11 +586,12 @@ const styles = StyleSheet.create({
   activityTitle: {
     color: colors.text,
     fontSize: 12,
-    fontWeight: "800"
+    fontWeight: fontWeights.action
   },
   activityDetail: {
     color: colors.textMuted,
     fontSize: 11,
+    fontWeight: fontWeights.body,
     marginTop: 2
   },
   approvalPanel: {
@@ -875,11 +606,12 @@ const styles = StyleSheet.create({
   approvalTitle: {
     color: colors.warning,
     fontSize: 13,
-    fontWeight: "800"
+    fontWeight: fontWeights.action
   },
   approvalDetail: {
     color: colors.text,
     fontSize: 13,
+    fontWeight: fontWeights.body,
     marginTop: 4
   },
   approvalActions: {
@@ -902,7 +634,7 @@ const styles = StyleSheet.create({
   },
   approvalButtonText: {
     fontSize: 12,
-    fontWeight: "800"
+    fontWeight: fontWeights.action
   },
   approvalAcceptText: {
     color: "#FFFFFF"
@@ -943,7 +675,7 @@ const styles = StyleSheet.create({
   messageRole: {
     color: colors.textMuted,
     fontSize: 11,
-    fontWeight: "800",
+    fontWeight: fontWeights.action,
     marginBottom: 4
   },
   userRole: {
@@ -952,6 +684,7 @@ const styles = StyleSheet.create({
   messageText: {
     color: colors.text,
     fontSize: 15,
+    fontWeight: fontWeights.body,
     lineHeight: 21
   },
   userText: {
@@ -967,11 +700,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     color: colors.text,
     fontSize: 20,
-    fontWeight: "800"
+    fontWeight: fontWeights.title
   },
   emptyText: {
     color: colors.textMuted,
     fontSize: 14,
+    fontWeight: fontWeights.body,
     marginTop: 6,
     textAlign: "center"
   },
@@ -985,6 +719,20 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     gap: spacing.sm
   },
+  composerMenuButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "rgba(16, 24, 40, 0.12)",
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  composerMenuButtonPressed: {
+    opacity: 0.78,
+    transform: [{ scale: 0.98 }]
+  },
   input: {
     flex: 1,
     minHeight: 44,
@@ -997,6 +745,118 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     color: colors.text,
     fontSize: 15,
+    fontWeight: fontWeights.body,
     lineHeight: 20
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(16, 24, 40, 0.26)",
+    justifyContent: "flex-end",
+    padding: spacing.lg
+  },
+  menuPanel: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "rgba(255, 255, 255, 0.96)",
+    padding: spacing.md,
+    gap: spacing.md,
+    maxHeight: "72%"
+  },
+  menuHeader: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  menuTitleIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surfaceMuted
+  },
+  menuBackButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surfaceMuted
+  },
+  menuTitle: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: fontWeights.title
+  },
+  menuItems: {
+    gap: spacing.sm
+  },
+  optionList: {
+    maxHeight: 360
+  },
+  menuItem: {
+    minHeight: 54,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  menuItemDisabled: {
+    opacity: 0.42
+  },
+  menuItemPressed: {
+    opacity: 0.82
+  },
+  menuItemText: {
+    flex: 1,
+    minWidth: 0
+  },
+  menuItemLabel: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: fontWeights.action
+  },
+  menuItemDetail: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    marginTop: 2
+  },
+  mutedText: {
+    color: colors.textSubtle
+  },
+  selectable: {
+    minHeight: 48,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  selectableActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft
+  },
+  selectableLabel: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: fontWeights.subtitle
+  },
+  selectableLabelActive: {
+    color: colors.accent,
+    fontWeight: fontWeights.action
   }
 });

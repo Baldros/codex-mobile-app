@@ -2,6 +2,7 @@ import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { colors, radii } from "../theme/colors";
+import { fontWeights } from "../theme/typography";
 
 type PillButtonProps = {
   label: string;
@@ -66,7 +67,7 @@ const styles = StyleSheet.create({
   label: {
     color: colors.text,
     fontSize: 13,
-    fontWeight: "700"
+    fontWeight: fontWeights.action
   },
   selectedLabel: {
     color: "#FFFFFF"
@@ -74,6 +75,7 @@ const styles = StyleSheet.create({
   detail: {
     color: colors.textMuted,
     fontSize: 11,
+    fontWeight: fontWeights.body,
     marginTop: 2
   },
   selectedDetail: {

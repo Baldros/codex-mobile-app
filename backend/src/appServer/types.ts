@@ -16,6 +16,8 @@ export type BridgeThreadService = {
   listThreads(query?: BridgeThreadQuery): unknown[] | Promise<unknown>;
   createThread(input: { title?: string | undefined; workspace?: string | undefined }): unknown | Promise<unknown>;
   getThread(threadId: string, options?: { includeTurns?: boolean }): unknown | Promise<unknown>;
+  renameThread?(threadId: string, input: { title: string }): unknown | Promise<unknown>;
+  archiveThread?(threadId: string, input: { archived: boolean }): unknown | Promise<unknown>;
   runThread(
     threadId: string,
     input: RunStreamBody,

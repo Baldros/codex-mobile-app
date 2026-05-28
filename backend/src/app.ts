@@ -13,10 +13,13 @@ import { ThreadService } from "./threads/ThreadService.js";
 import { WorkspaceService } from "./workspaces/WorkspaceService.js";
 import type { RunStreamBody } from "./validation.js";
 import {
+  ArchiveThreadBodySchema,
   ApprovalResponseBodySchema,
   CancelRunBodySchema,
   CreateThreadBodySchema,
+  RenameThreadBodySchema,
   RunStreamBodySchema,
+  WorkspacePathBodySchema,
   WriteConfigBodySchema
 } from "./validation.js";
 
@@ -38,7 +41,7 @@ export function createApp(deps: AppDependencies = {}) {
     applyCorsHeaders(res);
 
     try {
-      await routeRequest(req, res, config, threadService);
+      await routeRequest(req, res, config, threadService, workspaceService);
     } catch (error) {
       sendError(res, error);
     }
@@ -53,7 +56,8 @@ async function routeRequest(
   req: IncomingMessage,
   res: ServerResponse,
   config: BridgeConfig,
-  threadService: BridgeThreadService
+  threadService: BridgeThreadService,
+  workspaceService: WorkspaceService
 ) {
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -69,6 +73,11 @@ async function routeRequest(
     const started = performance.now();
     const runtimeHealth = await threadService.health();
     sendJson(res, 200, buildHealthResponse(config, runtimeHealth, performance.now() - started));
+    return;
+  }
+
+  if (method === "GET" && pathname === "/v1/capabilities") {
+    sendJson(res, 200, buildCapabilitiesResponse(threadService, workspaceService));
     return;
   }
 
@@ -90,6 +99,32 @@ async function routeRequest(
       includeTurns: url.searchParams.get("include_turns") === "true"
     });
     sendJson(res, 200, { thread });
+    return;
+  }
+
+  const threadNameMatch = pathname.match(/^\/v1\/threads\/([^/]+)\/name$/);
+  if (method === "POST" && threadNameMatch) {
+    const capability = requireCapability(threadService, "renameThread");
+    const threadId = decodeURIComponent(threadNameMatch[1]!);
+    const body = RenameThreadBodySchema.parse(await readJson(req));
+    sendJson(res, 200, { thread: await capability(threadId, { title: body.title }) });
+    return;
+  }
+
+  const threadArchiveMatch = pathname.match(/^\/v1\/threads\/([^/]+)\/archive$/);
+  if (method === "POST" && threadArchiveMatch) {
+    const threadId = decodeURIComponent(threadArchiveMatch[1]!);
+    const body = ArchiveThreadBodySchema.parse(await readJson(req));
+    if (typeof threadService.archiveThread !== "function") {
+      sendJson(res, 200, {
+        supported: false,
+        archived: false,
+        thread_id: threadId,
+        reason: "Thread archive is not supported by this bridge runtime."
+      });
+      return;
+    }
+    sendJson(res, 200, await threadService.archiveThread(threadId, { archived: body.archived }));
     return;
   }
 
@@ -115,6 +150,18 @@ async function routeRequest(
       data: await threadService.listWorkspaces(),
       allowlist_file: config.workspaceAllowlistFile
     });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/v1/workspaces/remove") {
+    const body = WorkspacePathBodySchema.parse(await readJson(req));
+    sendJson(res, 200, workspaceService.removeFromFileAllowlist(body.path));
+    return;
+  }
+
+  if (method === "POST" && pathname === "/v1/workspaces/restore") {
+    const body = WorkspacePathBodySchema.parse(await readJson(req));
+    sendJson(res, 200, workspaceService.restoreToFileAllowlist(body.path));
     return;
   }
 
@@ -212,6 +259,19 @@ function buildHealthResponse(
     active_transport: runtimeHealth.runtime,
     checks: runtimeHealth.checks,
     elapsed_ms: Math.round(elapsedMs)
+  };
+}
+
+function buildCapabilitiesResponse(
+  threadService: BridgeThreadService,
+  workspaceService: WorkspaceService
+) {
+  return {
+    threads: {
+      rename: typeof threadService.renameThread === "function",
+      archive: typeof threadService.archiveThread === "function"
+    },
+    workspaces: workspaceService.capabilities()
   };
 }
 

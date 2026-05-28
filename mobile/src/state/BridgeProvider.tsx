@@ -19,6 +19,7 @@ import {
 import type {
   ActivityItem,
   ApprovalPolicy,
+  BridgeCapabilities,
   BridgeHealth,
   BridgePreferences,
   BridgeSseEvent,
@@ -30,6 +31,8 @@ import type {
   PendingApproval,
   ReasoningEffort,
   SandboxMode,
+  ThreadArchiveResponse,
+  WorkspaceMutationResponse,
   WorkspaceEntry
 } from "../domain/bridge";
 import { loadPreferences, savePreferences } from "../storage/preferences";
@@ -45,6 +48,7 @@ type BridgeContextValue = {
   models: CodexModel[];
   config: CodexConfigResponse | null;
   account: CodexAccountResponse | null;
+  capabilities: BridgeCapabilities;
   buildConfig: CodexMobileBuildConfig;
   tunnelConfigIssue: string | null;
   tunnelStatus: TunnelStatusSnapshot;
@@ -87,9 +91,15 @@ type BridgeContextValue = {
   ) => void;
   refreshAll: () => Promise<void>;
   refreshAccount: () => Promise<void>;
+  refreshWorkspaces: () => Promise<void>;
   refreshThreads: () => Promise<void>;
   selectWorkspace: (workspace: WorkspaceEntry) => Promise<void>;
   selectThread: (thread: BridgeThread) => void;
+  renameThread: (thread: BridgeThread, title: string) => Promise<BridgeThread | null>;
+  archiveThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
+  restoreThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
+  removeWorkspace: (workspace: WorkspaceEntry) => Promise<WorkspaceMutationResponse | null>;
+  restoreWorkspace: (path: string) => Promise<WorkspaceMutationResponse | null>;
   createNewThread: () => Promise<BridgeThread | null>;
   sendMessage: (message: string) => Promise<void>;
   cancelRun: () => Promise<void>;
@@ -98,6 +108,17 @@ type BridgeContextValue = {
 };
 
 const BridgeContext = createContext<BridgeContextValue | null>(null);
+
+const DEFAULT_CAPABILITIES: BridgeCapabilities = {
+  threads: {
+    rename: false,
+    archive: false
+  },
+  workspaces: {
+    remove: false,
+    restore: false
+  }
+};
 
 export function BridgeProvider({ children }: PropsWithChildren) {
   const [preferences, setPreferences] = useState<BridgePreferences>(DEFAULT_PREFERENCES);
@@ -108,6 +129,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [models, setModels] = useState<CodexModel[]>([]);
   const [config, setConfig] = useState<CodexConfigResponse | null>(null);
   const [account, setAccount] = useState<CodexAccountResponse | null>(null);
+  const [capabilities, setCapabilities] = useState<BridgeCapabilities>(DEFAULT_CAPABILITIES);
   const [selectedWorkspace, setSelectedWorkspaceState] = useState<WorkspaceEntry | null>(null);
   const [selectedThread, setSelectedThread] = useState<BridgeThread | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -190,12 +212,20 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setError(null);
 
     try {
-      const [healthResult, workspaceResult, modelResult, configResult, accountResult] = await Promise.allSettled([
+      const [
+        healthResult,
+        workspaceResult,
+        modelResult,
+        configResult,
+        accountResult,
+        capabilitiesResult
+      ] = await Promise.allSettled([
         client.health(),
         client.listWorkspaces(),
         client.listModels(),
         client.readConfig(),
-        client.readAccount()
+        client.readAccount(),
+        client.capabilities()
       ]);
 
       if (healthResult.status === "fulfilled") {
@@ -225,6 +255,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       }
       setConfig(configResponse);
       setAccount(accountResponse);
+      setCapabilities(
+        capabilitiesResult.status === "fulfilled" ? capabilitiesResult.value : DEFAULT_CAPABILITIES
+      );
       setAccountError(
         accountResult.status === "rejected"
           ? errorMessage(accountResult.reason)
@@ -264,8 +297,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         const allBridgeCallsFailed = failures.length === 4;
         setError(
           allBridgeCallsFailed
-            ? `Bridge indisponivel em ${preferences.baseUrl}. Inicie o backend ou ajuste a URL em Settings.`
-            : `Falha ao carregar: ${failures.join(", ")}.`
+            ? `Bridge unavailable at ${preferences.baseUrl}. Start the backend or adjust the URL in Settings.`
+            : `Failed to load: ${failures.join(", ")}.`
         );
       }
     } catch (caught) {
@@ -296,6 +329,20 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       void refreshAll();
     }
   }, [isBooting, refreshAll]);
+
+  const refreshWorkspaces = useCallback(async () => {
+    setIsRefreshing(true);
+    setError(null);
+    try {
+      const response = await client.listWorkspaces();
+      setWorkspaces(response.data);
+      setAllowlistFile(response.allowlist_file);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [client]);
 
   const refreshThreads = useCallback(async () => {
     if (!selectedWorkspace) {
@@ -333,15 +380,153 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setPendingApprovals([]);
   }, []);
 
+  const renameThread = useCallback(
+    async (thread: BridgeThread, title: string) => {
+      const cleanTitle = title.trim();
+      if (!cleanTitle) {
+        return null;
+      }
+
+      setError(null);
+      try {
+        const response = await client.renameThread(thread.id, cleanTitle);
+        setThreads((current) =>
+          current.map((item) => (item.id === response.thread.id ? response.thread : item))
+        );
+        setSelectedThread((current) =>
+          current?.id === response.thread.id ? response.thread : current
+        );
+        return response.thread;
+      } catch (caught) {
+        setError(errorMessage(caught));
+        return null;
+      }
+    },
+    [client]
+  );
+
+  const archiveThread = useCallback(
+    async (thread: BridgeThread) => {
+      setError(null);
+      try {
+        const response = await client.archiveThread(thread.id, true);
+        if (response.supported && response.archived) {
+          setThreads((current) => current.filter((item) => item.id !== thread.id));
+          if (selectedThread?.id === thread.id) {
+            setMessages([]);
+            setActivities([]);
+            setPendingApprovals([]);
+          }
+          setSelectedThread((current) => {
+            if (current?.id !== thread.id) {
+              return current;
+            }
+            return threads.find((item) => item.id !== thread.id) ?? null;
+          });
+        } else if (response.reason) {
+          setError(response.reason);
+        }
+        return response;
+      } catch (caught) {
+        setError(errorMessage(caught));
+        return null;
+      }
+    },
+    [client, selectedThread?.id, threads]
+  );
+
+  const restoreThread = useCallback(
+    async (thread: BridgeThread) => {
+      setError(null);
+      try {
+        const response = await client.archiveThread(thread.id, false);
+        if (response.supported) {
+          if (response.thread) {
+            setThreads((current) => [
+              response.thread!,
+              ...current.filter((item) => item.id !== response.thread!.id)
+            ]);
+          }
+          await refreshThreads();
+        } else if (response.reason) {
+          setError(response.reason);
+        }
+        return response;
+      } catch (caught) {
+        setError(errorMessage(caught));
+        return null;
+      }
+    },
+    [client, refreshThreads]
+  );
+
+  const removeWorkspace = useCallback(
+    async (workspace: WorkspaceEntry) => {
+      setError(null);
+      try {
+        const response = await client.removeWorkspace(workspace.path);
+        if (response.supported && response.removed) {
+          const workspaceResponse = await client.listWorkspaces();
+          setWorkspaces(workspaceResponse.data);
+          setAllowlistFile(workspaceResponse.allowlist_file);
+
+          if (selectedWorkspace?.path === workspace.path) {
+            const next =
+              workspaceResponse.data.find((entry) => entry.exists) ??
+              workspaceResponse.data[0] ??
+              null;
+            setSelectedWorkspaceState(next);
+            updatePreferences({ selectedWorkspacePath: next?.path ?? null });
+            setMessages([]);
+            setActivities([]);
+            setPendingApprovals([]);
+            if (next) {
+              await loadThreadsForWorkspace(next.path);
+            } else {
+              setThreads([]);
+              setSelectedThread(null);
+            }
+          }
+        } else if (response.reason) {
+          setError(response.reason);
+        }
+        return response;
+      } catch (caught) {
+        setError(errorMessage(caught));
+        return null;
+      }
+    },
+    [client, loadThreadsForWorkspace, selectedWorkspace?.path, updatePreferences]
+  );
+
+  const restoreWorkspace = useCallback(
+    async (path: string) => {
+      setError(null);
+      try {
+        const response = await client.restoreWorkspace(path);
+        if (response.supported) {
+          await refreshWorkspaces();
+        } else if (response.reason) {
+          setError(response.reason);
+        }
+        return response;
+      } catch (caught) {
+        setError(errorMessage(caught));
+        return null;
+      }
+    },
+    [client, refreshWorkspaces]
+  );
+
   const createNewThread = useCallback(async () => {
     if (!selectedWorkspace) {
-      setError("Nenhum repositorio selecionado.");
+      setError("No repository selected.");
       return null;
     }
 
     setError(null);
     const response = await client.createThread({
-      title: "Nova conversa mobile",
+      title: "New mobile conversation",
       workspace: selectedWorkspace.path
     });
     setThreads((current) => [response.thread, ...current.filter((thread) => thread.id !== response.thread.id)]);
@@ -444,7 +629,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       activeRunId.current = asString(data.run_id);
       addOrUpdateActivity({
         id: asString(data.run_id) ?? createId("run"),
-        title: "Run iniciada",
+        title: "Run started",
         status: "running"
       });
       return;
@@ -493,7 +678,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     if (event.event === "command_output") {
       addOrUpdateActivity({
         id: asString(data.item_id) ?? createId("command"),
-        title: "Saida de comando",
+        title: "Command output",
         detail: trimMiddle(asString(data.output) ?? "", 180),
         status: "running"
       });
@@ -505,7 +690,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       if (text) {
         addOrUpdateActivity({
           id: asString(data.item_id) ?? createId("reasoning"),
-          title: "Raciocinio",
+          title: "Reasoning",
           detail: trimMiddle(text, 180),
           status: "info"
         });
@@ -521,7 +706,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       ]);
       addOrUpdateActivity({
         id: approval.approval_id,
-        title: "Aprovacao pendente",
+        title: "Approval pending",
         detail: approvalSummary(approval),
         status: "running"
       });
@@ -531,7 +716,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     if (event.event === "file_change") {
       addOrUpdateActivity({
         id: asString(data.item_id) ?? createId("file"),
-        title: "Alteracao de arquivo",
+        title: "File change",
         detail: asString(data.status) ?? undefined,
         status: "info"
       });
@@ -539,8 +724,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     }
 
     if (event.event === "error") {
-      setError(asString(data.message) ?? "Erro no stream.");
-      markAssistantFailed(assistantMessageId, asString(data.message) ?? "Erro no stream.");
+      setError(asString(data.message) ?? "Stream error.");
+      markAssistantFailed(assistantMessageId, asString(data.message) ?? "Stream error.");
       return;
     }
 
@@ -550,7 +735,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       );
       addOrUpdateActivity({
         id: asString(data.run_id) ?? activeRunId.current ?? createId("done"),
-        title: "Run finalizada",
+        title: "Run finished",
         detail: asString(data.status) ?? "completed",
         status: asString(data.status) === "failed" ? "failed" : "done"
       });
@@ -596,7 +781,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       );
       addOrUpdateActivity({
         id: approval.approval_id,
-        title: "Aprovacao respondida",
+        title: "Approval answered",
         detail: decision,
         status: "done"
       });
@@ -638,6 +823,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       models,
       config,
       account,
+      capabilities,
       buildConfig,
       tunnelConfigIssue,
       tunnelStatus,
@@ -668,9 +854,15 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setExecutionSettings: updatePreferences,
       refreshAll,
       refreshAccount,
+      refreshWorkspaces,
       refreshThreads,
       selectWorkspace,
       selectThread,
+      renameThread,
+      archiveThread,
+      restoreThread,
+      removeWorkspace,
+      restoreWorkspace,
       createNewThread,
       sendMessage,
       cancelRun,
@@ -682,8 +874,10 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       allowlistFile,
       account,
       accountError,
+      archiveThread,
       buildConfig,
       cancelRun,
+      capabilities,
       config,
       createNewThread,
       error,
@@ -698,8 +892,13 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       preferences,
       refreshAll,
       refreshAccount,
+      refreshWorkspaces,
       refreshThreads,
+      removeWorkspace,
+      renameThread,
       respondApproval,
+      restoreThread,
+      restoreWorkspace,
       saveCodexDefaults,
       selectThread,
       selectWorkspace,
@@ -745,15 +944,15 @@ function asString(value: unknown) {
 function toolTitle(data: Record<string, unknown>) {
   const kind = asString(data.kind);
   if (kind === "command_execution") {
-    return "Comando";
+    return "Command";
   }
   if (kind === "webSearch" || kind === "web_search") {
-    return "Busca web";
+    return "Web search";
   }
   if (kind === "mcpToolCall" || kind === "mcp_tool_call") {
-    return asString(data.tool) ?? "Ferramenta MCP";
+    return asString(data.tool) ?? "MCP tool";
   }
-  return kind ?? "Ferramenta";
+  return kind ?? "Tool";
 }
 
 function toolDetail(data: Record<string, unknown>) {

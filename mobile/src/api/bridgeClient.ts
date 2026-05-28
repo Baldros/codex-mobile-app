@@ -1,6 +1,7 @@
 import { SseStreamDecoder } from "./sse";
 import type {
   BridgeHealth,
+  BridgeCapabilities,
   BridgeSseEvent,
   BridgeThread,
   CodexAccountResponse,
@@ -8,6 +9,8 @@ import type {
   CodexModel,
   PendingApproval,
   RunStreamBody,
+  ThreadArchiveResponse,
+  WorkspaceMutationResponse,
   WorkspaceEntry
 } from "../domain/bridge";
 
@@ -39,8 +42,26 @@ export class BridgeClient {
     return this.requestJson<BridgeHealth>("/health");
   }
 
+  capabilities() {
+    return this.requestJson<BridgeCapabilities>("/v1/capabilities");
+  }
+
   async listWorkspaces() {
     return this.requestJson<{ data: WorkspaceEntry[]; allowlist_file: string }>("/v1/workspaces");
+  }
+
+  async removeWorkspace(path: string) {
+    return this.requestJson<WorkspaceMutationResponse>("/v1/workspaces/remove", {
+      method: "POST",
+      body: JSON.stringify({ path })
+    });
+  }
+
+  async restoreWorkspace(path: string) {
+    return this.requestJson<WorkspaceMutationResponse>("/v1/workspaces/restore", {
+      method: "POST",
+      body: JSON.stringify({ path })
+    });
   }
 
   async listThreads(params: ListThreadsParams = {}) {
@@ -64,6 +85,26 @@ export class BridgeClient {
       method: "POST",
       body: JSON.stringify(input)
     });
+  }
+
+  async renameThread(threadId: string, title: string) {
+    return this.requestJson<{ thread: BridgeThread }>(
+      `/v1/threads/${encodeURIComponent(threadId)}/name`,
+      {
+        method: "POST",
+        body: JSON.stringify({ title })
+      }
+    );
+  }
+
+  async archiveThread(threadId: string, archived: boolean) {
+    return this.requestJson<ThreadArchiveResponse>(
+      `/v1/threads/${encodeURIComponent(threadId)}/archive`,
+      {
+        method: "POST",
+        body: JSON.stringify({ archived })
+      }
+    );
   }
 
   async listModels(limit = 50) {

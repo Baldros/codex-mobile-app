@@ -141,6 +141,41 @@ export class AppServerBridgeService {
     return toPublicThread(response.thread);
   }
 
+  async renameThread(threadId: string, input: { title: string }) {
+    await this.deps.client.request("thread/name/set", {
+      threadId,
+      name: input.title
+    });
+
+    const response = (await this.deps.client.request("thread/read", {
+      threadId,
+      includeTurns: false
+    })) as { thread: AppServerThread };
+    return toPublicThread(response.thread);
+  }
+
+  async archiveThread(threadId: string, input: { archived: boolean }) {
+    if (input.archived) {
+      await this.deps.client.request("thread/archive", { threadId });
+      return {
+        supported: true,
+        thread_id: threadId,
+        archived: true
+      };
+    }
+
+    const response = (await this.deps.client.request("thread/unarchive", {
+      threadId
+    })) as { thread?: AppServerThread };
+
+    return {
+      supported: true,
+      thread_id: threadId,
+      archived: false,
+      thread: response.thread ? toPublicThread(response.thread) : null
+    };
+  }
+
   async *runThread(
     threadId: string,
     input: RunStreamBody,
@@ -188,6 +223,7 @@ export class AppServerBridgeService {
         approvalsReviewer: "user",
         sandboxPolicy: toSandboxPolicy(input, cwd),
         model: input.model ?? this.deps.config.defaultModel,
+        serviceTier: input.service_tier ?? null,
         effort: input.model_reasoning_effort ?? null
       })) as { turn: { id: string; status?: string } };
 
@@ -340,7 +376,7 @@ function toPublicThread(thread: AppServerThread) {
     status: thread.status,
     runtime_thread_id: thread.id,
     model_provider: thread.modelProvider,
-    source: thread.source,
+    source: sourceLabel(thread.source),
     path: thread.path ?? null,
     turns: thread.turns ?? []
   };
@@ -348,6 +384,16 @@ function toPublicThread(thread: AppServerThread) {
 
 function toIso(value: number | undefined) {
   return value ? new Date(value * 1000).toISOString() : null;
+}
+
+function sourceLabel(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (isRecord(value) && typeof value.type === "string") {
+    return value.type;
+  }
+  return "appServer";
 }
 
 function toSandboxPolicy(input: RunStreamBody, cwd: string) {

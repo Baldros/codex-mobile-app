@@ -23,6 +23,18 @@ export const CancelRunBodySchema = z.object({
   run_id: z.string().trim().min(1).optional()
 });
 
+export const RenameThreadBodySchema = z.object({
+  title: z.string().trim().min(1).max(200)
+});
+
+export const ArchiveThreadBodySchema = z.object({
+  archived: z.boolean().optional().default(true)
+});
+
+export const WorkspacePathBodySchema = z.object({
+  path: z.string().trim().min(1)
+});
+
 export const WriteConfigBodySchema = z.object({
   key_path: z.string().trim().min(1),
   value: z.unknown(),
@@ -37,5 +49,8 @@ export const ApprovalResponseBodySchema = z.object({
 export type CreateThreadBody = z.infer<typeof CreateThreadBodySchema>;
 export type RunStreamBody = z.infer<typeof RunStreamBodySchema>;
 export type CancelRunBody = z.infer<typeof CancelRunBodySchema>;
+export type RenameThreadBody = z.infer<typeof RenameThreadBodySchema>;
+export type ArchiveThreadBody = z.infer<typeof ArchiveThreadBodySchema>;
+export type WorkspacePathBody = z.infer<typeof WorkspacePathBodySchema>;
 export type WriteConfigBody = z.infer<typeof WriteConfigBodySchema>;
 export type ApprovalResponseBody = z.infer<typeof ApprovalResponseBodySchema>;

@@ -25,7 +25,7 @@ type Listener = (snapshot: TunnelStatusSnapshot) => void;
 
 const INITIAL_STATUS: TunnelStatusSnapshot = {
   state: "disconnected",
-  message: "Tunnel parado",
+  message: "Tunnel stopped",
   connected: false,
   activeEndpoint: null,
   lastHealthCheckMs: null,
@@ -72,7 +72,7 @@ export class SshTunnelManager {
         const elapsed = await this.checkHealth();
         this.setStatus({
           state: "ready",
-          message: "Tunnel pronto",
+          message: "Tunnel ready",
           connected: true,
           lastHealthCheckMs: elapsed,
           lastError: null
@@ -81,7 +81,7 @@ export class SshTunnelManager {
       } catch {
         this.setStatus({
           state: "reconnecting",
-          message: "Reconectando tunnel",
+          message: "Reconnecting tunnel",
           connected: false
         });
       }
@@ -109,7 +109,7 @@ export class SshTunnelManager {
       try {
         this.setStatus({
           state: this.status.state === "reconnecting" ? "reconnecting" : "connecting",
-          message: `Conectando em ${endpoint.displayValue}`,
+          message: `Connecting to ${endpoint.displayValue}`,
           connected: false,
           activeEndpoint: endpoint.displayValue,
           lastError: null
@@ -119,7 +119,7 @@ export class SshTunnelManager {
         const elapsed = await this.checkHealth();
         this.setStatus({
           state: "ready",
-          message: "Tunnel pronto",
+          message: "Tunnel ready",
           connected: nativeStatus.connected,
           activeEndpoint: endpoint.displayValue,
           lastHealthCheckMs: elapsed,
@@ -132,7 +132,7 @@ export class SshTunnelManager {
       }
     }
 
-    const message = errorMessage(lastError) ?? "Falha ao conectar tunnel SSH.";
+    const message = errorMessage(lastError) ?? "Failed to connect SSH tunnel.";
     this.setStatus({
       state: "failed",
       message,

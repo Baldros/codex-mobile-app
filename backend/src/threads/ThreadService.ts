@@ -59,6 +59,14 @@ export class ThreadService {
     return toPublicThread(this.getThreadRecord(threadId));
   }
 
+  renameThread(threadId: string, input: { title: string }) {
+    const thread = this.deps.store.update(threadId, { title: input.title });
+    if (!thread) {
+      throw new AppError(404, "thread_not_found", `Thread not found: ${threadId}`);
+    }
+    return toPublicThread(thread);
+  }
+
   async *runThread(
     threadId: string,
     input: RunStreamBody,

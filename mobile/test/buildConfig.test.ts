@@ -44,7 +44,7 @@ describe("mobile build config", () => {
       gateway: "ssh_tunnel"
     });
     expect(validateSshTunnelBuildConfig(missing)).toBe(
-      "CODEX_MOBILE_SSH_REMOTE_HOSTS nao configurado."
+      "CODEX_MOBILE_SSH_REMOTE_HOSTS is not configured."
     );
 
     const ready = parseCodexMobileBuildConfig({

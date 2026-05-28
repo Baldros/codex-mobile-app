@@ -68,22 +68,22 @@ export function validateSshTunnelBuildConfig(config: CodexMobileBuildConfig) {
   }
 
   if (config.sshTunnel.endpointCandidates.length === 0) {
-    return "CODEX_MOBILE_SSH_REMOTE_HOSTS nao configurado.";
+    return "CODEX_MOBILE_SSH_REMOTE_HOSTS is not configured.";
   }
 
   if (!config.sshTunnel.username) {
-    return "CODEX_MOBILE_SSH_USERNAME nao configurado.";
+    return "CODEX_MOBILE_SSH_USERNAME is not configured.";
   }
 
   if (!config.sshTunnel.password && !config.sshTunnel.privateKeyPem) {
-    return "Configure CODEX_MOBILE_SSH_PASSWORD ou CODEX_MOBILE_SSH_PRIVATE_KEY_PEM.";
+    return "Configure CODEX_MOBILE_SSH_PASSWORD or CODEX_MOBILE_SSH_PRIVATE_KEY_PEM.";
   }
 
   if (
     (config.sshTunnel.password || config.sshTunnel.privateKeyPem) &&
     !config.sshTunnel.allowEmbeddedSshSecret
   ) {
-    return "Defina CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET=true para build interno com segredo SSH.";
+    return "Set CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET=true for internal builds with SSH secrets.";
   }
 
   return null;
