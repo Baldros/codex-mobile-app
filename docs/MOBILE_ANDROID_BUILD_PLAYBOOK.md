@@ -43,9 +43,11 @@ Se o Bridge ainda nao estiver rodando:
 Recomendado para build interno:
 
 - nao usar a conta principal do Windows;
-- usar `atlas_ssh` ou `codex_mobile`;
+- usar `atlas_ssh` ou `codex_mobile` (ou `codex_ssh`);
 - preferir chave SSH por app/dispositivo;
 - deixar senha embutida apenas como fallback temporario.
+
+**Guia Detalhado:** Para criar um usuário novo do zero e configurar as permissões corretamente no Windows, siga o [Guia de Configuração de Usuário SSH](./SSH_USER_SETUP_GUIDE.md).
 
 Criar chave:
 
@@ -105,7 +107,44 @@ SEU_IPV4_PUBLICO:39223 -> desktop:22
 
 ## 5. Rodar em desenvolvimento
 
-Para desenvolvimento visual/web, use acesso direto no Bridge:
+### 5.1 Preparar Ferramentas Android
+O projeto mobile exige o **Android SDK** e o **Java JDK** (versão 17+ recomendada). 
+
+Se você já tem o projeto **Atlas-Desktop-Agent**, pode reaproveitar as ferramentas portáteis dele para evitar instalações globais:
+
+```powershell
+# Usando ferramentas do Atlas (Portátil)
+$env:ANDROID_HOME = "E:\Atlas-Desktop-Agent\Mobile-Desktop-Agent\.android-sdk"
+$env:JAVA_HOME = "E:\Atlas-Desktop-Agent\Mobile-Desktop-Agent\.jdk"
+$env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:Path"
+```
+
+Se preferir instalar do zero:
+- **Java:** Instale o [OpenJDK 17](https://adoptium.net/).
+- **Android SDK:** Instale o [Android Studio](https://developer.android.com/studio). O SDK ficará em `%LOCALAPPDATA%\Android\Sdk`.
+
+### 5.2 Build e Instalação Direta
+Para compilar o módulo nativo de SSH e instalar no celular automaticamente:
+
+```powershell
+cd E:\codex-mobile-app\mobile
+
+# Configurar variáveis de build (exemplo para 5G)
+$env:CODEX_MOBILE_GATEWAY = "ssh_tunnel"
+$env:CODEX_MOBILE_SSH_USERNAME = "codex_ssh"
+$env:CODEX_MOBILE_SSH_AUTH_MODE = "private_key"
+$env:CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET = "true"
+$env:CODEX_MOBILE_SSH_REMOTE_HOSTS = "[SEU_IPV6]:22,SEU_IPV4_PUBLICO:39223"
+$env:CODEX_MOBILE_SSH_PRIVATE_KEY_PEM = Get-Content "$env:USERPROFILE\.ssh\codex_mobile_ed25519" -Raw
+
+# Validar conexão USB (deve aparecer 'device', não 'unauthorized')
+adb devices
+
+# Build, instala e inicia o app
+npx expo run:android
+```
+
+Para desenvolvimento visual/web (sem SSH):
 
 ```powershell
 cd E:\codex-mobile-app\mobile
