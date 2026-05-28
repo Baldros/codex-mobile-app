@@ -1,14 +1,26 @@
-# Codex Mobile Android - Build e Tunnel SSH
+# Codex Mobile Android - build interno
 
-Playbook para a estrategia equivalente ao Atlas, adaptada para Expo + React Native.
+Este playbook gera um APK Android standalone, instala no celular via USB e deixa o app pronto para usar o Codex Bridge pelo tunnel SSH.
 
-Estado atual: o app ja le configuracao `CODEX_MOBILE_*` via `mobile/app.config.js`, resolve a URL padrao para `http://127.0.0.1:18080` no mobile fisico e inclui um modulo Android inicial `CodexSshTunnel` para abrir local port forward. Isso exige dev build/APK nativo; Expo Go nao carrega esse modulo local.
+Fluxo esperado:
 
-## 1. Subir o Bridge
+```text
+App Android
+  -> http://127.0.0.1:18080 no proprio celular
+  -> CodexSshTunnel nativo
+  -> SSH codex_ssh@<endpoint>
+  -> desktop 127.0.0.1:8787
+```
+
+`127.0.0.1:18080` e o localhost do celular. Se o campo Bridge do app mostrar um IP de Wi-Fi, o app esta usando configuracao antiga ou build/dev config errado.
+
+## 1. Subir o Codex Bridge
+
+Terminal 1, deixe rodando:
 
 ```powershell
 cd E:\codex-mobile-app\backend
-$env:CODEX_BRIDGE_RUNTIME="app-server"
+$env:CODEX_BRIDGE_RUNTIME = "app-server"
 npm run build
 npm run start
 ```
@@ -21,168 +33,235 @@ Invoke-RestMethod http://127.0.0.1:8787/health
 
 Esperado: `status=ok`, `codex_ready=true`, `active_transport=app-server`.
 
-## 2. Validar SSH local
+## 2. Validar SSH do Codex
 
-O Codex pode compartilhar o mesmo `sshd` do Atlas na porta local `22`.
+O usuario SSH deste app e `codex_ssh`. Nao use usuario/chave de outro sistema.
 
-Nesta maquina foi observado um usuario dedicado existente chamado `atlas_ssh`. Para o MVP, ele pode ser reaproveitado. Para isolamento melhor, crie um usuario `codex_mobile` ou use uma chave SSH separada para o Codex no mesmo usuario dedicado.
+Se ainda nao criou o usuario, siga [SSH_USER_SETUP_GUIDE.md](./SSH_USER_SETUP_GUIDE.md). O caminho padrao da chave deste playbook e:
+
+```powershell
+$KeyPath = "$env:USERPROFILE\.ssh\codex_mobile_rsa"
+```
+
+Use uma chave RSA 4096 em PEM para o APK Android. A chave ED25519 pode funcionar no `ssh.exe` do Windows, mas falhou no caminho Android/JSch deste app com desconexao `preauth`.
+
+Criar chave, se necessario:
+
+```powershell
+ssh-keygen -t rsa -b 4096 -m PEM -f "$env:USERPROFILE\.ssh\codex_mobile_rsa" -C "codex-mobile-android-rsa"
+```
+
+Validar login local:
+
+```powershell
+ssh -i "$env:USERPROFILE\.ssh\codex_mobile_rsa" codex_ssh@127.0.0.1 -p 22
+```
+
+Validar ambiente local:
 
 ```powershell
 cd E:\codex-mobile-app
-.\scripts\validate_ssh_tunnel_ready.ps1 -SshPort 22
+.\scripts\validate_ssh_tunnel_ready.ps1 -SshPort 22 -PublicSshPort 39223
 ```
 
-Se o Bridge ainda nao estiver rodando:
+## 3. Preparar Android SDK e USB
+
+Se voce ja tem JDK e Android SDK no PATH, pule esta parte. Caso contrario, este bloco tenta o SDK padrao do Android Studio e cai para o bundle portatil disponivel nesta maquina:
 
 ```powershell
-.\scripts\validate_ssh_tunnel_ready.ps1 -SshPort 22 -SkipBridgeHealth
+$DefaultAndroidSdk = "$env:LOCALAPPDATA\Android\Sdk"
+$PortableAndroidSdk = "E:\Atlas-Desktop-Agent\Mobile-Desktop-Agent\.android-sdk"
+$PortableJdk = "E:\Atlas-Desktop-Agent\Mobile-Desktop-Agent\.jdk"
+
+if (Test-Path "$DefaultAndroidSdk\platform-tools\adb.exe") {
+  $env:ANDROID_HOME = $DefaultAndroidSdk
+} elseif (Test-Path "$PortableAndroidSdk\platform-tools\adb.exe") {
+  $env:ANDROID_HOME = $PortableAndroidSdk
+}
+
+if (-not (Get-Command java -ErrorAction SilentlyContinue) -and (Test-Path "$PortableJdk\bin\java.exe")) {
+  $env:JAVA_HOME = $PortableJdk
+}
+
+$ToolPath = "$env:ANDROID_HOME\platform-tools;$env:ANDROID_HOME\emulator;$env:Path"
+if ($env:JAVA_HOME) {
+  $ToolPath = "$env:JAVA_HOME\bin;$ToolPath"
+}
+$env:Path = $ToolPath
+
+adb version
+java -version
 ```
 
-## 3. Preparar usuario e chave SSH
-
-Recomendado para build interno:
-
-- nao usar a conta principal do Windows;
-- usar `atlas_ssh` ou `codex_mobile` (ou `codex_ssh`);
-- preferir chave SSH por app/dispositivo;
-- deixar senha embutida apenas como fallback temporario.
-
-**Guia Detalhado:** Para criar um usuário novo do zero e configurar as permissões corretamente no Windows, siga o [Guia de Configuração de Usuário SSH](./SSH_USER_SETUP_GUIDE.md).
-
-Criar chave:
+Conecte o celular por USB, aceite a autorizacao de debug no aparelho e valide:
 
 ```powershell
-ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\codex_mobile_android_ed25519" -C "codex-mobile-android"
+adb devices
 ```
 
-Instalar a chave publica no usuario dedicado existente:
+O aparelho precisa aparecer como `device`, nao `unauthorized`.
+
+## 4. Configurar o build
+
+Terminal 2, no mesmo PowerShell que vai rodar o build:
 
 ```powershell
-$SshUser = "atlas_ssh"
-$PublicKey = Get-Content "$env:USERPROFILE\.ssh\codex_mobile_android_ed25519.pub" -Raw
-$SshDir = "C:\Users\$SshUser\.ssh"
-$AuthorizedKeys = "$SshDir\authorized_keys"
+cd E:\codex-mobile-app\mobile
 
-New-Item -ItemType Directory -Force -Path $SshDir | Out-Null
-Add-Content -Path $AuthorizedKeys -Value $PublicKey
-```
+Remove-Item Env:\EXPO_PUBLIC_BRIDGE_URL -ErrorAction SilentlyContinue
 
-Validar login com a chave:
+$KeyPath = "$env:USERPROFILE\.ssh\codex_mobile_rsa"
+$DesktopLanIp = (Get-NetIPConfiguration |
+  Where-Object { $_.IPv4DefaultGateway -and $_.IPv4Address } |
+  Select-Object -First 1).IPv4Address.IPAddress
+$PublicIpv4 = (Invoke-RestMethod "https://api.ipify.org?format=json").ip
 
-```powershell
-ssh -i "$env:USERPROFILE\.ssh\codex_mobile_android_ed25519" atlas_ssh@127.0.0.1 -p 22
-```
-
-## 4. Configurar endpoints do build
-
-Use uma porta publica diferente da porta publica do Atlas, mas encaminhando para o mesmo `sshd` local em `22`.
-
-Com chave privada:
-
-```powershell
 $env:CODEX_MOBILE_GATEWAY = "ssh_tunnel"
 $env:CODEX_MOBILE_API_BASE_URL = "http://127.0.0.1:18080"
 $env:CODEX_MOBILE_SSH_TUNNEL_LOCAL_URL = "http://127.0.0.1:18080"
-$env:CODEX_MOBILE_SSH_REMOTE_HOSTS = "[SEU_IPV6]:22,SEU_IPV4_PUBLICO:39223"
-$env:CODEX_MOBILE_SSH_USERNAME = "atlas_ssh"
+$env:CODEX_MOBILE_SSH_REMOTE_HOSTS = "${DesktopLanIp}:22,${PublicIpv4}:39223"
+$env:CODEX_MOBILE_SSH_USERNAME = "codex_ssh"
 $env:CODEX_MOBILE_SSH_AUTH_MODE = "private_key"
-$env:CODEX_MOBILE_SSH_PRIVATE_KEY_PEM = Get-Content "$env:USERPROFILE\.ssh\codex_mobile_android_ed25519" -Raw
+$env:CODEX_MOBILE_SSH_PRIVATE_KEY_PEM = Get-Content $KeyPath -Raw
 $env:CODEX_MOBILE_SSH_REMOTE_API_HOST = "127.0.0.1"
 $env:CODEX_MOBILE_SSH_REMOTE_API_PORT = "8787"
 $env:CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET = "true"
+
+$env:CODEX_MOBILE_SSH_REMOTE_HOSTS
 ```
 
-Com senha, se ainda for necessario:
-
-```powershell
-$env:CODEX_MOBILE_SSH_AUTH_MODE = "password"
-$env:CODEX_MOBILE_SSH_PASSWORD = "sua_senha"
-```
-
-Para IPv4, configure o roteador como:
+Para 5G, `PublicIpv4:39223` precisa chegar ao desktop na porta local `22`:
 
 ```text
 SEU_IPV4_PUBLICO:39223 -> desktop:22
 ```
 
-## 5. Rodar em desenvolvimento
+Se a sua internet estiver em CGNAT ou a porta publica nao abrir, use IPv6 direto (`[SEU_IPV6]:22`) ou VPN/Tailscale como endpoint SSH.
 
-### 5.1 Preparar Ferramentas Android
-O projeto mobile exige o **Android SDK** e o **Java JDK** (versão 17+ recomendada). 
+## 5. Buildar, instalar e abrir
 
-Se você já tem o projeto **Atlas-Desktop-Agent**, pode reaproveitar as ferramentas portáteis dele para evitar instalações globais:
-
-```powershell
-# Usando ferramentas do Atlas (Portátil)
-$env:ANDROID_HOME = "E:\Atlas-Desktop-Agent\Mobile-Desktop-Agent\.android-sdk"
-$env:JAVA_HOME = "E:\Atlas-Desktop-Agent\Mobile-Desktop-Agent\.jdk"
-$env:Path = "$env:JAVA_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:Path"
-```
-
-Se preferir instalar do zero:
-- **Java:** Instale o [OpenJDK 17](https://adoptium.net/).
-- **Android SDK:** Instale o [Android Studio](https://developer.android.com/studio). O SDK ficará em `%LOCALAPPDATA%\Android\Sdk`.
-
-### 5.2 Build e Instalação Direta
-Para compilar o módulo nativo de SSH e instalar no celular automaticamente:
+Este e o caminho de "build de verdade": release APK com bundle JS embutido, sem Metro.
 
 ```powershell
 cd E:\codex-mobile-app\mobile
+if (-not (Test-Path .\android\gradlew.bat)) {
+  npx expo prebuild --platform android
+}
 
-# Configurar variáveis de build (exemplo para 5G)
-$env:CODEX_MOBILE_GATEWAY = "ssh_tunnel"
-$env:CODEX_MOBILE_SSH_USERNAME = "codex_ssh"
-$env:CODEX_MOBILE_SSH_AUTH_MODE = "private_key"
-$env:CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET = "true"
-$env:CODEX_MOBILE_SSH_REMOTE_HOSTS = "[SEU_IPV6]:22,SEU_IPV4_PUBLICO:39223"
-$env:CODEX_MOBILE_SSH_PRIVATE_KEY_PEM = Get-Content "$env:USERPROFILE\.ssh\codex_mobile_ed25519" -Raw
-
-# Validar conexão USB (deve aparecer 'device', não 'unauthorized')
 adb devices
 
-# Build, instala e inicia o app
-npx expo run:android
+cd E:\codex-mobile-app\mobile\android
+
+# Reset nativo antes do clean.
+# O clean do Android/React Native pode falhar se app/.cxx apontar para codegen/autolinking
+# gerado que ja foi removido por outros clean tasks.
+$Workspace = (Resolve-Path "E:\codex-mobile-app").Path
+$NativeResetTargets = @(
+  "E:\codex-mobile-app\mobile\android\app\.cxx",
+  "E:\codex-mobile-app\mobile\android\app\build\generated\autolinking"
+)
+foreach ($Target in $NativeResetTargets) {
+  if (Test-Path -LiteralPath $Target) {
+    $Resolved = (Resolve-Path -LiteralPath $Target).Path
+    if (-not $Resolved.StartsWith($Workspace, [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "Refusing to remove outside workspace: $Resolved"
+    }
+    Remove-Item -LiteralPath $Resolved -Recurse -Force
+  }
+}
+
+.\gradlew.bat clean --no-daemon --console=plain --stacktrace
+.\gradlew.bat :app:createBundleReleaseJsAndAssets :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon --console=plain --stacktrace
+
+adb install -r .\app\build\outputs\apk\release\app-release.apk
+
+adb shell monkey -p internal.codex.mobile -c android.intent.category.LAUNCHER 1
 ```
 
-Para desenvolvimento visual/web (sem SSH):
+O APK gerado fica em:
+
+```text
+E:\codex-mobile-app\mobile\android\app\build\outputs\apk\release\app-release.apk
+```
+
+Se a instalacao falhar por assinatura incompativel, remova o app antigo e instale o APK novamente:
 
 ```powershell
-cd E:\codex-mobile-app\mobile
-$env:EXPO_PUBLIC_BRIDGE_URL="http://127.0.0.1:8787"
-npm run web
+adb uninstall internal.codex.mobile
+adb install -r .\app\build\outputs\apk\release\app-release.apk
 ```
 
-Para testar o tunnel embutido no Android, use dev build nativo:
+Para validar um estado completamente limpo no aparelho, rode antes da instalacao:
 
 ```powershell
-cd E:\codex-mobile-app\mobile
-npx expo run:android
+adb shell pm clear internal.codex.mobile
 ```
 
-Ou com EAS/internal build:
+Para gerar um APK multi-ABI distributavel, remova `-PreactNativeArchitectures=arm64-v8a`. O build demora mais porque compila `armeabi-v7a`, `arm64-v8a`, `x86` e `x86_64`.
 
-```powershell
-npx eas-cli build --platform android --profile internal
-```
+O APK release precisa permitir cleartext para `http://127.0.0.1:18080`. Em projetos Android ja prebuildados, confirme que `mobile/android/app/src/main/AndroidManifest.xml` contem `android:usesCleartextTraffic="true"` no elemento `<application>`.
 
-O perfil `internal` esta em `mobile/eas.json`. Endpoints e credenciais sensiveis devem vir do ambiente local ou de secrets do EAS, nao do arquivo.
+## 6. Conferir no app
 
-## 6. Validacao no app
+Em Settings:
 
-Na tela Settings, confira:
-
+- `Bridge`: `http://127.0.0.1:18080`
 - `Gateway`: `ssh_tunnel`
 - `Local URL`: `http://127.0.0.1:18080`
 - `Remote API`: `127.0.0.1:8787`
-- `SSH endpoints`: inclui IPv6 direto em `:22` e IPv4 publico em `:39223`
-- `Config`: `ok` quando endpoints, usuario, segredo e confirmacao explicita estiverem definidos
+- `SSH endpoints`: LAN/publico/IPv6 configurados no build
+- `SSH user`: `codex_ssh`
+- `Config`: `ok`
 
-## 7. Pendencias da fatia Android
+Depois toque em refresh ou execute uma acao que chame o Bridge. O tunnel deve sair de `connecting` para `ready`.
 
-O MVP do tunnel esta conectado ao cliente HTTP/SSE, mas ainda falta validar em aparelho fisico e robustecer operacao:
+## 7. Se apareceu IP de Wi-Fi
 
-- build Android real com o modulo local autolinkado;
-- teste em 5G com `SEU_IPV4_PUBLICO:39223 -> desktop:22`;
-- reconnect com backoff em watchdog periodico;
-- host key pinning ou trust-on-first-use;
-- painel de status mais completo fora de Settings.
+Corrija nesta ordem:
+
+1. Confirme que `EXPO_PUBLIC_BRIDGE_URL` nao esta definido no terminal do build.
+2. Confirme que `CODEX_MOBILE_API_BASE_URL` e `CODEX_MOBILE_SSH_TUNNEL_LOCAL_URL` estao em `http://127.0.0.1:18080`.
+3. Limpe dados antes de instalar: `adb shell pm clear internal.codex.mobile`.
+4. Rebuild com o fluxo da secao 5.
+
+IP de Wi-Fi no terminal do Expo/Metro e normal em dev build, mas nao deve aparecer como URL do Bridge neste APK release.
+
+## 8. Se `gradlew clean` falhar no CMake/autolinking
+
+Sintoma comum:
+
+```text
+add_subdirectory given source ... android/build/generated/source/codegen/jni/ which is not an existing directory
+```
+
+Nao trate isso como erro de SSH. E estado nativo incremental antigo. Rode o bloco de reset nativo da secao 5 e depois repita:
+
+```powershell
+.\gradlew.bat clean --no-daemon --console=plain --stacktrace
+```
+
+## 9. Se nao conecta no 5G
+
+Checklist rapido:
+
+- desktop ligado, sem suspender;
+- Codex Bridge respondendo em `http://127.0.0.1:8787/health`;
+- `sshd` rodando no desktop;
+- `codex_ssh` autentica com a chave;
+- firewall do Windows permite OpenSSH Server;
+- roteador encaminha `39223 -> desktop:22`, ou ha IPv6/VPN valido;
+- app continua com Bridge `http://127.0.0.1:18080`.
+
+No 5G, o Bridge nao muda para IP publico. O app continua falando com `127.0.0.1:18080`; quem muda e o endpoint SSH usado por baixo.
+
+## 10. Fluxo dev, se precisar
+
+`npx expo run:android` e fluxo de desenvolvimento. Ele pode depender do Metro e mostrar IP de LAN. Use apenas para iterar UI/codigo.
+
+```powershell
+cd E:\codex-mobile-app\mobile
+adb reverse tcp:8081 tcp:8081
+npx expo run:android
+```
+
+Para entregar um APK que o usuario abre e usa, use o fluxo release da secao 5.
