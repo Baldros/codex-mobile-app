@@ -35,6 +35,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { IconAction } from "../components/IconAction";
+import { MarkdownText } from "../components/MarkdownText";
 import { Screen } from "../components/Screen";
 import { StatusPill } from "../components/StatusPill";
 import {
@@ -599,7 +600,7 @@ function MessageBubble({
           {message.pending ? " ." : ""}
         </Text>
         {isUser ? (
-          <Text style={[styles.messageText, styles.userText]}>{message.text}</Text>
+          <MarkdownText text={message.text} variant="inverted" />
         ) : parts.length > 0 ? (
           <View style={styles.messageParts}>
             {parts.map((part, index) => (
@@ -632,10 +633,9 @@ function MessagePart({
   onRespondApproval: (approval: PendingApproval, decision: string) => void;
 }) {
   if (part.type === "text") {
+    const text = part.text || (part.pending ? "Working..." : "");
     return (
-      <Text style={[styles.messageText, !isFirst && styles.messagePartSpacing]}>
-        {part.text || (part.pending ? "Working..." : "")}
-      </Text>
+      <MarkdownText text={text} containerStyle={!isFirst && styles.messagePartSpacing} />
     );
   }
 
