@@ -22,6 +22,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -60,11 +61,13 @@ import { fontWeights } from "../theme/typography";
 import { compactPath } from "../utils/format";
 
 type MenuPanel = "main" | "models" | "effort" | "fast";
+const keyboardComposerGap = spacing.xl + spacing.xs;
 
 export function HomeScreen() {
   const bridge = useBridge();
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState("");
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [limitsVisible, setLimitsVisible] = useState(false);
   const messageListRef = useRef<FlatList<ChatMessage> | null>(null);
   const selectedModel = useMemo(
@@ -72,7 +75,8 @@ export function HomeScreen() {
     [bridge.models, bridge.selectedModelId]
   );
   const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
-  const composerBottomPadding = spacing.md + insets.bottom;
+  const composerBottomPadding =
+    spacing.md + (Platform.OS === "android" && keyboardVisible ? keyboardComposerGap : insets.bottom);
   const latestMessageMarker = useMemo(() => {
     const last = bridge.messages[bridge.messages.length - 1];
     if (!last) {
@@ -103,10 +107,30 @@ export function HomeScreen() {
     return () => cancelAnimationFrame(frame);
   }, [bridge.messages.length, latestMessageMarker]);
 
+  useEffect(() => {
+    if (Platform.OS !== "android") {
+      return undefined;
+    }
+
+    const showSubscription = Keyboard.addListener("keyboardDidShow", (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardVisible(true);
+    });
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKeyboardVisible(false);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
   return (
     <Screen>
       <KeyboardAvoidingView
-        behavior={Platform.select({ ios: "padding", default: undefined })}
+        behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
         style={styles.keyboard}
       >
         <View style={styles.header}>
@@ -185,6 +209,12 @@ export function HomeScreen() {
             multiline
             placeholder="Message Codex"
             placeholderTextColor={colors.textSubtle}
+            onBlur={() => setKeyboardVisible(false)}
+            onFocus={() => {
+              if (Platform.OS === "android" && Keyboard.isVisible()) {
+                setKeyboardVisible(true);
+              }
+            }}
             style={styles.input}
           />
           {bridge.isRunning ? (
