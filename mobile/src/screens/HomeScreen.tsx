@@ -22,7 +22,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -31,7 +30,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useWindowDimensions,
   View
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -62,25 +60,19 @@ import { compactPath } from "../utils/format";
 
 type MenuPanel = "main" | "models" | "effort" | "fast";
 const keyboardComposerGap = spacing.xl + spacing.xs;
-const restoredWindowHeightTolerance = spacing.xl * 2;
 
 export function HomeScreen() {
   const bridge = useBridge();
   const insets = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
   const [draft, setDraft] = useState("");
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [limitsVisible, setLimitsVisible] = useState(false);
   const messageListRef = useRef<FlatList<ChatMessage> | null>(null);
-  const maxWindowHeightRef = useRef(windowHeight);
-  const keyboardShrinkObservedRef = useRef(false);
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
     [bridge.models, bridge.selectedModelId]
   );
   const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
-  const composerBottomInset = keyboardVisible ? Math.max(keyboardComposerGap, insets.bottom) : insets.bottom;
-  const composerBottomPadding = spacing.md + composerBottomInset;
+  const composerBottomPadding = spacing.md + insets.bottom;
   const latestMessageMarker = useMemo(() => {
     const last = bridge.messages[bridge.messages.length - 1];
     if (!last) {
@@ -101,43 +93,6 @@ export function HomeScreen() {
   }, [bridge.messages]);
 
   useEffect(() => {
-    const showSubscription = Keyboard.addListener("keyboardDidShow", (event) => {
-      Keyboard.scheduleLayoutAnimation(event);
-      keyboardShrinkObservedRef.current = false;
-      setKeyboardVisible(true);
-    });
-    const hideSubscription = Keyboard.addListener("keyboardDidHide", (event) => {
-      Keyboard.scheduleLayoutAnimation(event);
-      keyboardShrinkObservedRef.current = false;
-      setKeyboardVisible(false);
-    });
-
-    return () => {
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, []);
-
-  useEffect(() => {
-    maxWindowHeightRef.current = Math.max(maxWindowHeightRef.current, windowHeight);
-    if (!keyboardVisible) {
-      keyboardShrinkObservedRef.current = false;
-      return;
-    }
-    if (windowHeight < maxWindowHeightRef.current - restoredWindowHeightTolerance) {
-      keyboardShrinkObservedRef.current = true;
-      return;
-    }
-    if (
-      keyboardShrinkObservedRef.current &&
-      windowHeight >= maxWindowHeightRef.current - restoredWindowHeightTolerance
-    ) {
-      keyboardShrinkObservedRef.current = false;
-      setKeyboardVisible(false);
-    }
-  }, [keyboardVisible, windowHeight]);
-
-  useEffect(() => {
     if (bridge.messages.length === 0) {
       return;
     }
@@ -152,6 +107,7 @@ export function HomeScreen() {
     <Screen>
       <KeyboardAvoidingView
         behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
+        keyboardVerticalOffset={Platform.select({ android: keyboardComposerGap, default: 0 })}
         style={styles.keyboard}
       >
         <View style={styles.header}>
@@ -230,15 +186,6 @@ export function HomeScreen() {
             multiline
             placeholder="Message Codex"
             placeholderTextColor={colors.textSubtle}
-            onBlur={() => {
-              keyboardShrinkObservedRef.current = false;
-              setKeyboardVisible(false);
-            }}
-            onFocus={() => {
-              if (Keyboard.isVisible()) {
-                setKeyboardVisible(true);
-              }
-            }}
             style={styles.input}
           />
           {bridge.isRunning ? (
