@@ -60,7 +60,6 @@ import { fontWeights } from "../theme/typography";
 import { compactPath } from "../utils/format";
 
 type MenuPanel = "main" | "models" | "effort" | "fast";
-const keyboardComposerGap = spacing.xl + spacing.xs;
 
 export function HomeScreen() {
   const bridge = useBridge();
@@ -107,8 +106,7 @@ export function HomeScreen() {
   return (
     <Screen>
       <KeyboardAvoidingView
-        behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
-        keyboardVerticalOffset={Platform.select({ android: keyboardComposerGap, default: 0 })}
+        behavior={Platform.select({ ios: "padding", default: undefined })}
         style={styles.keyboard}
       >
         <View style={styles.header}>
