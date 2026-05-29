@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import type { BridgeConfig } from "../src/config.js";
@@ -190,6 +190,57 @@ describe("Codex bridge HTTP API", () => {
       path: process.cwd(),
       exists: true
     });
+  });
+
+  it("exposes MCP status, reload, and resource reads through the bridge API", async () => {
+    await close(server);
+    const mcpService = {
+      listMcpServers: vi.fn(async () => ({
+        data: [
+          {
+            name: "docs",
+            authStatus: "unsupported",
+            resources: [{ name: "Guide", uri: "docs://guide", mimeType: "text/plain" }],
+            resourceTemplates: [],
+            tools: {}
+          }
+        ],
+        nextCursor: null
+      })),
+      readMcpResource: vi.fn(async () => ({
+        contents: [{ uri: "docs://guide", mimeType: "text/plain", text: "MCP content" }]
+      })),
+      reloadMcpServers: vi.fn(async () => ({}))
+    };
+    server = createServer(createApp({ config: testConfig(), threadService: mcpService as never }));
+    baseUrl = await listen(server);
+
+    const listResponse = await fetch(`${baseUrl}/v1/mcp/servers?detail=full&limit=10`);
+    const listBody = (await listResponse.json()) as { data: Array<{ name: string }> };
+    expect(listResponse.status).toBe(200);
+    expect(listBody.data[0]?.name).toBe("docs");
+
+    const readResponse = await fetch(`${baseUrl}/v1/mcp/resources/read`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server: "docs", uri: "docs://guide", thread_id: "thr_1" })
+    });
+    const readBody = (await readResponse.json()) as { contents: Array<{ text: string }> };
+    expect(readResponse.status).toBe(200);
+    expect(readBody.contents[0]?.text).toBe("MCP content");
+    expect(mcpService.readMcpResource).toHaveBeenCalledWith({
+      server: "docs",
+      uri: "docs://guide",
+      threadId: "thr_1"
+    });
+
+    const reloadResponse = await fetch(`${baseUrl}/v1/mcp/reload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    expect(reloadResponse.status).toBe(200);
+    expect(mcpService.reloadMcpServers).toHaveBeenCalledOnce();
   });
 });
 

@@ -17,6 +17,7 @@ import {
   ApprovalResponseBodySchema,
   CancelRunBodySchema,
   CreateThreadBodySchema,
+  McpResourceReadBodySchema,
   RenameThreadBodySchema,
   RunStreamBodySchema,
   WorkspacePathBodySchema,
@@ -250,6 +251,33 @@ async function routeRequest(
     return;
   }
 
+  if (method === "GET" && pathname === "/v1/mcp/servers") {
+    const capability = requireCapability(threadService, "listMcpServers");
+    sendJson(res, 200, await capability({
+      detail: parseMcpDetail(url.searchParams.get("detail")) ?? "full",
+      limit: parsePositiveInt(url.searchParams.get("limit")) ?? 50,
+      cursor: url.searchParams.get("cursor")
+    }));
+    return;
+  }
+
+  if (method === "POST" && pathname === "/v1/mcp/resources/read") {
+    const capability = requireCapability(threadService, "readMcpResource");
+    const body = McpResourceReadBodySchema.parse(await readJson(req));
+    sendJson(res, 200, await capability({
+      server: body.server,
+      uri: body.uri,
+      threadId: body.thread_id ?? null
+    }));
+    return;
+  }
+
+  if (method === "POST" && pathname === "/v1/mcp/reload") {
+    const capability = requireCapability(threadService, "reloadMcpServers");
+    sendJson(res, 200, await capability());
+    return;
+  }
+
   const approvalMatch = pathname.match(/^\/v1\/approvals\/([^/]+)\/respond$/);
   if (method === "POST" && approvalMatch) {
     const capability = requireCapability(threadService, "respondApproval");
@@ -306,6 +334,11 @@ function buildCapabilitiesResponse(
     threads: {
       rename: typeof threadService.renameThread === "function",
       archive: typeof threadService.archiveThread === "function"
+    },
+    mcp: {
+      list: typeof threadService.listMcpServers === "function",
+      read: typeof threadService.readMcpResource === "function",
+      reload: typeof threadService.reloadMcpServers === "function"
     },
     workspaces: workspaceService.capabilities()
   };
@@ -414,6 +447,13 @@ function parseOptionalBoolean(value: string | null) {
     return null;
   }
   return value === "true";
+}
+
+function parseMcpDetail(value: string | null) {
+  if (value === "full" || value === "toolsAndAuthOnly") {
+    return value;
+  }
+  return null;
 }
 
 function requireCapability<T extends keyof BridgeThreadService>(

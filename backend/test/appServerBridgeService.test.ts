@@ -32,6 +32,34 @@ describe("AppServerBridgeService thread actions", () => {
       name: "Mobile title"
     });
   });
+
+  it("lists, reloads, and reads MCP resources through app-server RPC methods", async () => {
+    const client = new CapturingAppServerClient();
+    const service = new AppServerBridgeService({
+      config: testConfig(),
+      client: client as unknown as AppServerClient,
+      workspaceService: new WorkspaceService(testConfig())
+    });
+
+    await service.listMcpServers({ detail: "full", limit: 10, cursor: "cursor_1" });
+    await service.readMcpResource({ server: "github", uri: "repo://openai/codex", threadId: "thr_1" });
+    await service.reloadMcpServers();
+
+    expect(client.requests.slice(-3)).toEqual([
+      {
+        method: "mcpServerStatus/list",
+        params: { detail: "full", limit: 10, cursor: "cursor_1" }
+      },
+      {
+        method: "mcpServer/resource/read",
+        params: { server: "github", uri: "repo://openai/codex", threadId: "thr_1" }
+      },
+      {
+        method: "config/mcpServer/reload",
+        params: undefined
+      }
+    ]);
+  });
 });
 
 class CapturingAppServerClient {
@@ -56,6 +84,12 @@ class CapturingAppServerClient {
           turns: []
         }
       };
+    }
+    if (method === "mcpServerStatus/list") {
+      return { data: [], nextCursor: null };
+    }
+    if (method === "mcpServer/resource/read") {
+      return { contents: [{ uri: "repo://openai/codex", text: "resource body" }] };
     }
     return {};
   }

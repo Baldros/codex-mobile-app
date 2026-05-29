@@ -31,4 +31,11 @@ export type BridgeThreadService = {
   readAccount?(): Promise<unknown>;
   listExperimentalFeatures?(params?: { limit?: number; cursor?: string | null }): Promise<unknown>;
   respondApproval?(requestId: string, input: { decision: string; payload?: unknown }): Promise<unknown>;
+  listMcpServers?(params?: {
+    detail?: "full" | "toolsAndAuthOnly";
+    limit?: number;
+    cursor?: string | null;
+  }): Promise<unknown>;
+  readMcpResource?(input: { server: string; uri: string; threadId?: string | null }): Promise<unknown>;
+  reloadMcpServers?(): Promise<unknown>;
 };

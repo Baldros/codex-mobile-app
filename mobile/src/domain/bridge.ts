@@ -22,6 +22,11 @@ export type BridgeCapabilities = {
     rename: boolean;
     archive: boolean;
   };
+  mcp?: {
+    list: boolean;
+    read: boolean;
+    reload: boolean;
+  };
   workspaces: {
     remove: boolean;
     restore: boolean;
@@ -136,6 +141,55 @@ export type CodexAccountResponse = {
   requiresOpenaiAuth: boolean;
   rateLimits?: CodexRateLimitsResponse | null;
   rateLimitsError?: string | null;
+};
+
+export type McpResource = {
+  name: string;
+  uri: string;
+  title?: string | null;
+  description?: string | null;
+  mimeType?: string | null;
+  size?: number | null;
+};
+
+export type McpResourceTemplate = {
+  name: string;
+  uriTemplate: string;
+  title?: string | null;
+  description?: string | null;
+  mimeType?: string | null;
+};
+
+export type McpTool = {
+  name: string;
+  title?: string | null;
+  description?: string | null;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+};
+
+export type McpServerStatus = {
+  name: string;
+  authStatus: "unsupported" | "notLoggedIn" | "bearerToken" | "oAuth" | string;
+  resources: McpResource[];
+  resourceTemplates: McpResourceTemplate[];
+  tools: Record<string, McpTool>;
+};
+
+export type McpServerStatusResponse = {
+  data: McpServerStatus[];
+  nextCursor?: string | null;
+};
+
+export type McpResourceContent = {
+  uri: string;
+  mimeType?: string | null;
+  text?: string;
+  blob?: string;
+};
+
+export type McpResourceReadResponse = {
+  contents: McpResourceContent[];
 };
 
 export type RunStreamBody = {

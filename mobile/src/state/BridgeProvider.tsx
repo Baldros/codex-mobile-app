@@ -30,6 +30,8 @@ import type {
   ChatMessagePart,
   CodexConfigResponse,
   CodexModel,
+  McpResourceReadResponse,
+  McpServerStatus,
   PendingApproval,
   ReasoningEffort,
   SandboxMode,
@@ -50,6 +52,8 @@ type BridgeContextValue = {
   models: CodexModel[];
   config: CodexConfigResponse | null;
   account: CodexAccountResponse | null;
+  mcpServers: McpServerStatus[];
+  mcpResource: McpResourceReadResponse | null;
   capabilities: BridgeCapabilities;
   buildConfig: CodexMobileBuildConfig;
   tunnelConfigIssue: string | null;
@@ -70,10 +74,12 @@ type BridgeContextValue = {
   isBooting: boolean;
   isRefreshing: boolean;
   isRefreshingAccount: boolean;
+  isRefreshingMcp: boolean;
   isLoadingThreadContent: boolean;
   isRunning: boolean;
   error: string | null;
   accountError: string | null;
+  mcpError: string | null;
   setBaseUrl: (baseUrl: string) => void;
   setSelectedModelId: (modelId: string) => void;
   setReasoningEffort: (effort: ReasoningEffort) => void;
@@ -96,6 +102,9 @@ type BridgeContextValue = {
   ) => void;
   refreshAll: () => Promise<void>;
   refreshAccount: () => Promise<void>;
+  refreshMcpServers: () => Promise<void>;
+  readMcpResource: (server: string, uri: string) => Promise<void>;
+  reloadMcpServers: () => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
   refreshThreads: () => Promise<void>;
   selectWorkspace: (workspace: WorkspaceEntry) => Promise<void>;
@@ -119,6 +128,11 @@ const DEFAULT_CAPABILITIES: BridgeCapabilities = {
     rename: false,
     archive: false
   },
+  mcp: {
+    list: false,
+    read: false,
+    reload: false
+  },
   workspaces: {
     remove: false,
     restore: false
@@ -134,6 +148,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [models, setModels] = useState<CodexModel[]>([]);
   const [config, setConfig] = useState<CodexConfigResponse | null>(null);
   const [account, setAccount] = useState<CodexAccountResponse | null>(null);
+  const [mcpServers, setMcpServers] = useState<McpServerStatus[]>([]);
+  const [mcpResource, setMcpResource] = useState<McpResourceReadResponse | null>(null);
   const [capabilities, setCapabilities] = useState<BridgeCapabilities>(DEFAULT_CAPABILITIES);
   const [selectedWorkspace, setSelectedWorkspaceState] = useState<WorkspaceEntry | null>(null);
   const [selectedThread, setSelectedThreadState] = useState<BridgeThread | null>(null);
@@ -144,10 +160,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [isBooting, setIsBooting] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingAccount, setIsRefreshingAccount] = useState(false);
+  const [isRefreshingMcp, setIsRefreshingMcp] = useState(false);
   const [isLoadingThreadContent, setIsLoadingThreadContent] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [mcpError, setMcpError] = useState<string | null>(null);
   const preferencesRef = useRef<BridgePreferences>(DEFAULT_PREFERENCES);
   const selectedThreadRef = useRef<BridgeThread | null>(null);
   const threadContentRequestId = useRef(0);
@@ -303,6 +321,58 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setAccountError(errorMessage(caught));
     } finally {
       setIsRefreshingAccount(false);
+    }
+  }, [client]);
+
+  const refreshMcpServers = useCallback(async () => {
+    setIsRefreshingMcp(true);
+    setMcpError(null);
+
+    try {
+      const response = await client.listMcpServers({ detail: "full", limit: 50 });
+      setMcpServers(response.data);
+    } catch (caught) {
+      setMcpServers([]);
+      setMcpError(errorMessage(caught));
+    } finally {
+      setIsRefreshingMcp(false);
+    }
+  }, [client]);
+
+  const readMcpResource = useCallback(
+    async (server: string, uri: string) => {
+      setIsRefreshingMcp(true);
+      setMcpError(null);
+
+      try {
+        const response = await client.readMcpResource({
+          server,
+          uri,
+          threadId: selectedThreadRef.current?.id ?? null
+        });
+        setMcpResource(response);
+      } catch (caught) {
+        setMcpResource(null);
+        setMcpError(errorMessage(caught));
+      } finally {
+        setIsRefreshingMcp(false);
+      }
+    },
+    [client]
+  );
+
+  const reloadMcpServers = useCallback(async () => {
+    setIsRefreshingMcp(true);
+    setMcpError(null);
+
+    try {
+      await client.reloadMcpServers();
+      const response = await client.listMcpServers({ detail: "full", limit: 50 });
+      setMcpServers(response.data);
+    } catch (caught) {
+      setMcpError(errorMessage(caught));
+    } finally {
+      setIsRefreshingMcp(false);
     }
   }, [client]);
 
@@ -1192,6 +1262,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       models,
       config,
       account,
+      mcpServers,
+      mcpResource,
       capabilities,
       buildConfig,
       tunnelConfigIssue,
@@ -1212,10 +1284,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       isBooting,
       isRefreshing,
       isRefreshingAccount,
+      isRefreshingMcp,
       isLoadingThreadContent,
       isRunning,
       error,
       accountError,
+      mcpError,
       setBaseUrl: (baseUrl) => updatePreferences({ baseUrl: baseUrl.trim() }),
       setSelectedModelId: (modelId) => updatePreferences({ selectedModelId: modelId }),
       setReasoningEffort: (reasoningEffort) => updatePreferences({ reasoningEffort }),
@@ -1226,6 +1300,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setExecutionSettings: updatePreferences,
       refreshAll,
       refreshAccount,
+      refreshMcpServers,
+      readMcpResource,
+      reloadMcpServers,
       refreshWorkspaces,
       refreshThreads,
       selectWorkspace,
@@ -1258,16 +1335,23 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       isBooting,
       isLoadingThreadContent,
       isRefreshingAccount,
+      isRefreshingMcp,
       isRefreshing,
       isRunning,
+      mcpError,
+      mcpResource,
+      mcpServers,
       messages,
       models,
       pendingApprovals,
       preferences,
+      readMcpResource,
       refreshAll,
       refreshAccount,
+      refreshMcpServers,
       refreshWorkspaces,
       refreshThreads,
+      reloadMcpServers,
       removeWorkspace,
       renameThread,
       respondApproval,

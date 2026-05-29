@@ -8,6 +8,8 @@ import type {
   CodexAccountResponse,
   CodexConfigResponse,
   CodexModel,
+  McpResourceReadResponse,
+  McpServerStatusResponse,
   PendingApproval,
   RunStreamBody,
   ThreadArchiveResponse,
@@ -141,6 +143,35 @@ export class BridgeClient {
         value,
         merge_strategy: "replace"
       })
+    });
+  }
+
+  async listMcpServers(params: { detail?: "full" | "toolsAndAuthOnly"; limit?: number; cursor?: string | null } = {}) {
+    const query = new URLSearchParams();
+    query.set("detail", params.detail ?? "full");
+    query.set("limit", String(params.limit ?? 50));
+    if (params.cursor) {
+      query.set("cursor", params.cursor);
+    }
+
+    return this.requestJson<McpServerStatusResponse>(`/v1/mcp/servers?${query.toString()}`);
+  }
+
+  async readMcpResource(input: { server: string; uri: string; threadId?: string | null }) {
+    return this.requestJson<McpResourceReadResponse>("/v1/mcp/resources/read", {
+      method: "POST",
+      body: JSON.stringify({
+        server: input.server,
+        uri: input.uri,
+        thread_id: input.threadId ?? null
+      })
+    });
+  }
+
+  async reloadMcpServers() {
+    return this.requestJson<Record<string, never>>("/v1/mcp/reload", {
+      method: "POST",
+      body: JSON.stringify({})
     });
   }
 

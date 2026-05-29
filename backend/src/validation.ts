@@ -46,6 +46,12 @@ export const ApprovalResponseBodySchema = z.object({
   payload: z.unknown().optional()
 });
 
+export const McpResourceReadBodySchema = z.object({
+  server: z.string().trim().min(1),
+  uri: z.string().trim().min(1),
+  thread_id: z.string().trim().min(1).nullable().optional()
+});
+
 export type CreateThreadBody = z.infer<typeof CreateThreadBodySchema>;
 export type RunStreamBody = z.infer<typeof RunStreamBodySchema>;
 export type CancelRunBody = z.infer<typeof CancelRunBodySchema>;
@@ -54,3 +60,4 @@ export type ArchiveThreadBody = z.infer<typeof ArchiveThreadBodySchema>;
 export type WorkspacePathBody = z.infer<typeof WorkspacePathBodySchema>;
 export type WriteConfigBody = z.infer<typeof WriteConfigBodySchema>;
 export type ApprovalResponseBody = z.infer<typeof ApprovalResponseBodySchema>;
+export type McpResourceReadBody = z.infer<typeof McpResourceReadBodySchema>;

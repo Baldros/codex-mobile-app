@@ -343,6 +343,28 @@ export class AppServerBridgeService {
     });
   }
 
+  async listMcpServers(
+    params: { detail?: "full" | "toolsAndAuthOnly"; limit?: number; cursor?: string | null } = {}
+  ) {
+    return this.deps.client.request("mcpServerStatus/list", {
+      detail: params.detail ?? "full",
+      limit: params.limit ?? 50,
+      cursor: params.cursor ?? null
+    });
+  }
+
+  async readMcpResource(input: { server: string; uri: string; threadId?: string | null }) {
+    return this.deps.client.request("mcpServer/resource/read", {
+      server: input.server,
+      uri: input.uri,
+      threadId: input.threadId ?? null
+    });
+  }
+
+  async reloadMcpServers() {
+    return this.deps.client.request("config/mcpServer/reload");
+  }
+
   async respondApproval(requestId: string, input: { decision: string; payload?: unknown }) {
     const pending = this.pendingApprovals.get(requestId);
     if (!pending) {

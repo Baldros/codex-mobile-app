@@ -272,6 +272,52 @@ GET /v1/settings/features
 
 Lista feature flags conhecidas pelo Codex.
 
+## MCP
+
+O mobile nao fala JSON-RPC diretamente com `codex app-server`. O Bridge expoe uma
+camada HTTP para inventario e leitura de recursos MCP.
+
+```http
+GET /v1/mcp/servers?detail=full&limit=50&cursor=<cursor>
+```
+
+Lista servidores MCP configurados, incluindo `authStatus`, `tools`, `resources`
+e `resourceTemplates`. Use `detail=toolsAndAuthOnly` quando a tela nao precisar
+carregar recursos.
+
+```http
+POST /v1/mcp/resources/read
+Content-Type: application/json
+
+{
+  "server": "github",
+  "uri": "repo://owner/name",
+  "thread_id": "thr_123"
+}
+```
+
+Le um recurso MCP pelo servidor indicado. `thread_id` e opcional e permite que o
+app-server use a configuracao MCP do contexto da conversa carregada.
+
+```json
+{
+  "contents": [
+    {
+      "uri": "repo://owner/name",
+      "mimeType": "text/plain",
+      "text": "conteudo"
+    }
+  ]
+}
+```
+
+```http
+POST /v1/mcp/reload
+```
+
+Recarrega a configuracao MCP do Codex a partir do disco e enfileira refresh para
+threads carregadas.
+
 ## SSH Status
 
 ```http
