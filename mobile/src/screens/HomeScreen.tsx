@@ -83,6 +83,7 @@ export function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [selectedMentions, setSelectedMentions] = useState<ComposerMention[]>([]);
   const [limitsVisible, setLimitsVisible] = useState(false);
   const messageListRef = useRef<FlatList<ChatMessage> | null>(null);
@@ -142,6 +143,8 @@ export function HomeScreen() {
 
     const showSubscription = Keyboard.addListener("keyboardDidShow", (event) => {
       Keyboard.scheduleLayoutAnimation(event);
+      // height excludes the navigation bar (RN reports imeInsets.bottom - barInsets.bottom).
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
       setKeyboardVisible(true);
     });
     const hideSubscription = Keyboard.addListener("keyboardDidHide", (event) => {
@@ -202,8 +205,18 @@ export function HomeScreen() {
   return (
     <Screen>
       <KeyboardAvoidingView
-        behavior={Platform.select({ ios: "padding", android: "height", default: undefined })}
-        style={styles.keyboard}
+        // Android (edge-to-edge + adjustResize) does not resize the root view; RN only emits
+        // keyboard events. Avoid behavior="height": its self-referential reset can stick a stale
+        // offset after the keyboard closes. Instead lift the stack deterministically by the measured
+        // keyboard height (+ the navigation-bar inset it overlaps), gated on keyboardVisible so it
+        // resets to zero on keyboardDidHide / blur. iOS keeps the reliable padding behavior.
+        behavior={Platform.select({ ios: "padding", default: undefined })}
+        style={[
+          styles.keyboard,
+          Platform.OS === "android" && keyboardVisible
+            ? { paddingBottom: keyboardHeight + insets.bottom }
+            : null
+        ]}
       >
         <View style={styles.header}>
           <View style={styles.titleWrap}>
