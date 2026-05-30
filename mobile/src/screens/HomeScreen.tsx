@@ -67,7 +67,6 @@ import { fontWeights } from "../theme/typography";
 import { compactPath } from "../utils/format";
 
 type MenuPanel = "main" | "models" | "effort" | "fast";
-const keyboardComposerGap = spacing.xl + spacing.xs;
 type ComposerMentionKind = "app" | "skill" | "mcp_resource";
 type ComposerMention = {
   id: string;
@@ -104,8 +103,11 @@ export function HomeScreen() {
       ),
     [bridge.apps, bridge.skills, bridge.mcpServers, mentionTrigger?.query]
   );
+  // With the keyboard open on Android the stack is already lifted to the keyboard top
+  // (KeyboardAvoidingView paddingBottom), so the composer only needs its own breathing room —
+  // symmetric with the composer's top padding. When closed it clears the navigation bar inset.
   const composerBottomPadding =
-    spacing.md + (Platform.OS === "android" && keyboardVisible ? keyboardComposerGap : insets.bottom);
+    Platform.OS === "android" && keyboardVisible ? spacing.md : spacing.md + insets.bottom;
   const latestMessageMarker = useMemo(() => {
     const last = bridge.messages[bridge.messages.length - 1];
     if (!last) {
