@@ -5,6 +5,26 @@ export const CreateThreadBodySchema = z.object({
   workspace: z.string().trim().min(1).optional()
 });
 
+const RunInputItemSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("mention"),
+    name: z.string().trim().min(1),
+    path: z.string().trim().min(1)
+  }),
+  z.object({
+    type: z.literal("skill"),
+    name: z.string().trim().min(1),
+    path: z.string().trim().min(1)
+  }),
+  z.object({
+    type: z.literal("mcp_resource"),
+    server: z.string().trim().min(1),
+    uri: z.string().trim().min(1),
+    name: z.string().trim().min(1).optional(),
+    title: z.string().trim().min(1).optional()
+  })
+]);
+
 export const RunStreamBodySchema = z.object({
   message: z.string().trim().min(1),
   cwd: z.string().trim().min(1).optional(),
@@ -16,7 +36,8 @@ export const RunStreamBodySchema = z.object({
   skip_git_repo_check: z.boolean().optional(),
   network_access_enabled: z.boolean().optional(),
   web_search_mode: z.enum(["disabled", "cached", "live"]).optional(),
-  additional_directories: z.array(z.string().trim().min(1)).optional()
+  additional_directories: z.array(z.string().trim().min(1)).optional(),
+  input_items: z.array(RunInputItemSchema).max(20).optional()
 });
 
 export const CancelRunBodySchema = z.object({

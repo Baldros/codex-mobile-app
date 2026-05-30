@@ -60,6 +60,29 @@ describe("AppServerBridgeService thread actions", () => {
       }
     ]);
   });
+
+  it("lists apps and skills through app-server RPC methods", async () => {
+    const client = new CapturingAppServerClient();
+    const service = new AppServerBridgeService({
+      config: testConfig(),
+      client: client as unknown as AppServerClient,
+      workspaceService: new WorkspaceService(testConfig())
+    });
+
+    await service.listApps({ limit: 20, cursor: "apps_cursor", threadId: "thr_1", forceRefetch: true });
+    await service.listSkills({ cwd: process.cwd(), forceReload: true });
+
+    expect(client.requests.slice(-2)).toEqual([
+      {
+        method: "app/list",
+        params: { limit: 20, cursor: "apps_cursor", threadId: "thr_1", forceRefetch: true }
+      },
+      {
+        method: "skills/list",
+        params: { cwds: [process.cwd()], forceReload: true }
+      }
+    ]);
+  });
 });
 
 class CapturingAppServerClient {
@@ -90,6 +113,12 @@ class CapturingAppServerClient {
     }
     if (method === "mcpServer/resource/read") {
       return { contents: [{ uri: "repo://openai/codex", text: "resource body" }] };
+    }
+    if (method === "app/list") {
+      return { data: [], nextCursor: null };
+    }
+    if (method === "skills/list") {
+      return { data: [] };
     }
     return {};
   }

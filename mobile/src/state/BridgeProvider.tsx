@@ -26,14 +26,17 @@ import type {
   BridgeSseEvent,
   BridgeThread,
   CodexAccountResponse,
+  CodexApp,
   ChatMessage,
   ChatMessagePart,
   CodexConfigResponse,
   CodexModel,
+  CodexSkill,
   McpResourceReadResponse,
   McpServerStatus,
   PendingApproval,
   ReasoningEffort,
+  RunInputItem,
   SandboxMode,
   ThreadArchiveResponse,
   WorkspaceMutationResponse,
@@ -52,6 +55,8 @@ type BridgeContextValue = {
   models: CodexModel[];
   config: CodexConfigResponse | null;
   account: CodexAccountResponse | null;
+  apps: CodexApp[];
+  skills: CodexSkill[];
   mcpServers: McpServerStatus[];
   mcpResource: McpResourceReadResponse | null;
   capabilities: BridgeCapabilities;
@@ -74,11 +79,13 @@ type BridgeContextValue = {
   isBooting: boolean;
   isRefreshing: boolean;
   isRefreshingAccount: boolean;
+  isRefreshingMentions: boolean;
   isRefreshingMcp: boolean;
   isLoadingThreadContent: boolean;
   isRunning: boolean;
   error: string | null;
   accountError: string | null;
+  mentionError: string | null;
   mcpError: string | null;
   setBaseUrl: (baseUrl: string) => void;
   setSelectedModelId: (modelId: string) => void;
@@ -102,6 +109,7 @@ type BridgeContextValue = {
   ) => void;
   refreshAll: () => Promise<void>;
   refreshAccount: () => Promise<void>;
+  refreshMentions: () => Promise<void>;
   refreshMcpServers: () => Promise<void>;
   readMcpResource: (server: string, uri: string) => Promise<void>;
   reloadMcpServers: () => Promise<void>;
@@ -115,7 +123,7 @@ type BridgeContextValue = {
   removeWorkspace: (workspace: WorkspaceEntry) => Promise<WorkspaceMutationResponse | null>;
   restoreWorkspace: (path: string) => Promise<WorkspaceMutationResponse | null>;
   createNewThread: () => Promise<void>;
-  sendMessage: (message: string) => Promise<void>;
+  sendMessage: (message: string, inputItems?: RunInputItem[]) => Promise<void>;
   cancelRun: () => Promise<void>;
   respondApproval: (approval: PendingApproval, decision: string) => Promise<void>;
   saveCodexDefaults: () => Promise<void>;
@@ -133,6 +141,12 @@ const DEFAULT_CAPABILITIES: BridgeCapabilities = {
     read: false,
     reload: false
   },
+  apps: {
+    list: false
+  },
+  skills: {
+    list: false
+  },
   workspaces: {
     remove: false,
     restore: false
@@ -148,6 +162,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [models, setModels] = useState<CodexModel[]>([]);
   const [config, setConfig] = useState<CodexConfigResponse | null>(null);
   const [account, setAccount] = useState<CodexAccountResponse | null>(null);
+  const [apps, setApps] = useState<CodexApp[]>([]);
+  const [skills, setSkills] = useState<CodexSkill[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerStatus[]>([]);
   const [mcpResource, setMcpResource] = useState<McpResourceReadResponse | null>(null);
   const [capabilities, setCapabilities] = useState<BridgeCapabilities>(DEFAULT_CAPABILITIES);
@@ -160,11 +176,13 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [isBooting, setIsBooting] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingAccount, setIsRefreshingAccount] = useState(false);
+  const [isRefreshingMentions, setIsRefreshingMentions] = useState(false);
   const [isRefreshingMcp, setIsRefreshingMcp] = useState(false);
   const [isLoadingThreadContent, setIsLoadingThreadContent] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [mentionError, setMentionError] = useState<string | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);
   const preferencesRef = useRef<BridgePreferences>(DEFAULT_PREFERENCES);
   const selectedThreadRef = useRef<BridgeThread | null>(null);
@@ -375,6 +393,80 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setIsRefreshingMcp(false);
     }
   }, [client]);
+
+  const refreshMentions = useCallback(async () => {
+    setIsRefreshingMentions(true);
+    setMentionError(null);
+
+    let currentCapabilities: BridgeCapabilities;
+    try {
+      currentCapabilities = await client.capabilities();
+      setCapabilities(currentCapabilities);
+    } catch (caught) {
+      setApps([]);
+      setSkills([]);
+      setMcpServers([]);
+      setMentionError(`capabilities: ${errorMessage(caught)}`);
+      setIsRefreshingMentions(false);
+      return;
+    }
+
+    const supportsApps = currentCapabilities.apps?.list === true;
+    const supportsSkills = currentCapabilities.skills?.list === true;
+    const supportsMcp = currentCapabilities.mcp?.list === true;
+
+    if (!supportsApps && !supportsSkills && !supportsMcp) {
+      setApps([]);
+      setSkills([]);
+      setMcpServers([]);
+      setMentionError("Current bridge does not expose apps, skills, or MCP routes. Restart the updated backend.");
+      setIsRefreshingMentions(false);
+      return;
+    }
+
+    const cwd = selectedWorkspace?.path;
+    const threadId = selectedThreadRef.current?.id ?? null;
+    const [appsResult, skillsResult, mcpResult] = await Promise.allSettled([
+      supportsApps ? client.listApps({ limit: 50, threadId }) : Promise.resolve(null),
+      supportsSkills ? client.listSkills({ ...(cwd ? { cwd } : {}), forceReload: false }) : Promise.resolve(null),
+      supportsMcp ? client.listMcpServers({ detail: "full", limit: 50 }) : Promise.resolve(null)
+    ]);
+
+    if (appsResult.status === "fulfilled" && appsResult.value) {
+      setApps(appsResult.value.data.filter((app) => app.isAccessible !== false && app.isEnabled !== false));
+    } else {
+      setApps([]);
+    }
+
+    if (skillsResult.status === "fulfilled" && skillsResult.value) {
+      setSkills(
+        skillsResult.value.data
+          .flatMap((entry) => entry.skills)
+          .filter((skill) => skill.enabled !== false)
+      );
+    } else {
+      setSkills([]);
+    }
+
+    if (mcpResult.status === "fulfilled" && mcpResult.value) {
+      setMcpServers(mcpResult.value.data);
+    } else {
+      setMcpServers([]);
+    }
+
+    const failures = [
+      supportsApps && appsResult.status === "rejected" ? `apps: ${errorMessage(appsResult.reason)}` : null,
+      supportsSkills && skillsResult.status === "rejected" ? `skills: ${errorMessage(skillsResult.reason)}` : null,
+      supportsMcp && mcpResult.status === "rejected" ? `mcp: ${errorMessage(mcpResult.reason)}` : null
+    ].filter((item): item is string => Boolean(item));
+    const hasLoadedMentionSource =
+      (supportsApps && appsResult.status === "fulfilled") ||
+      (supportsSkills && skillsResult.status === "fulfilled") ||
+      (supportsMcp && mcpResult.status === "fulfilled");
+
+    setMentionError(failures.length > 0 && !hasLoadedMentionSource ? failures.join("; ") : null);
+    setIsRefreshingMentions(false);
+  }, [client, selectedWorkspace?.path]);
 
   const refreshAll = useCallback(async () => {
     setIsRefreshing(true);
@@ -802,7 +894,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   ]);
 
   const sendMessage = useCallback(
-    async (message: string) => {
+    async (message: string, inputItems: RunInputItem[] = []) => {
       const cleanMessage = message.trim();
       if (!cleanMessage || isRunning || !selectedWorkspace) {
         return;
@@ -843,7 +935,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
           model_reasoning_effort: preferences.reasoningEffort,
           approval_policy: preferences.approvalPolicy,
           sandbox_mode: preferences.sandboxMode,
-          network_access_enabled: preferences.networkAccessEnabled
+          network_access_enabled: preferences.networkAccessEnabled,
+          ...(inputItems.length > 0 ? { input_items: inputItems } : {})
         };
         const requestBody =
           preferences.selectedModelId || preferences.serviceTier
@@ -1262,6 +1355,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       models,
       config,
       account,
+      apps,
+      skills,
       mcpServers,
       mcpResource,
       capabilities,
@@ -1284,11 +1379,13 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       isBooting,
       isRefreshing,
       isRefreshingAccount,
+      isRefreshingMentions,
       isRefreshingMcp,
       isLoadingThreadContent,
       isRunning,
       error,
       accountError,
+      mentionError,
       mcpError,
       setBaseUrl: (baseUrl) => updatePreferences({ baseUrl: baseUrl.trim() }),
       setSelectedModelId: (modelId) => updatePreferences({ selectedModelId: modelId }),
@@ -1300,6 +1397,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setExecutionSettings: updatePreferences,
       refreshAll,
       refreshAccount,
+      refreshMentions,
       refreshMcpServers,
       readMcpResource,
       reloadMcpServers,
@@ -1324,6 +1422,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       allowlistFile,
       account,
       accountError,
+      apps,
       archiveThread,
       buildConfig,
       cancelRun,
@@ -1335,9 +1434,11 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       isBooting,
       isLoadingThreadContent,
       isRefreshingAccount,
+      isRefreshingMentions,
       isRefreshingMcp,
       isRefreshing,
       isRunning,
+      mentionError,
       mcpError,
       mcpResource,
       mcpServers,
@@ -1348,6 +1449,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       readMcpResource,
       refreshAll,
       refreshAccount,
+      refreshMentions,
       refreshMcpServers,
       refreshWorkspaces,
       refreshThreads,
@@ -1363,6 +1465,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       sendMessage,
       selectedThread,
       selectedWorkspace,
+      skills,
       tunnelStatus,
       tunnelConfigIssue,
       threads,

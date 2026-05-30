@@ -27,6 +27,12 @@ export type BridgeCapabilities = {
     read: boolean;
     reload: boolean;
   };
+  apps?: {
+    list: boolean;
+  };
+  skills?: {
+    list: boolean;
+  };
   workspaces: {
     remove: boolean;
     restore: boolean;
@@ -192,6 +198,63 @@ export type McpResourceReadResponse = {
   contents: McpResourceContent[];
 };
 
+export type CodexApp = {
+  id: string;
+  name: string;
+  description?: string | null;
+  logoUrl?: string | null;
+  isAccessible?: boolean;
+  isEnabled?: boolean;
+  installUrl?: string | null;
+};
+
+export type CodexAppsResponse = {
+  data: CodexApp[];
+  nextCursor?: string | null;
+};
+
+export type CodexSkill = {
+  name: string;
+  path: string;
+  description?: string;
+  shortDescription?: string | null;
+  enabled: boolean;
+  scope?: string;
+  interface?: {
+    displayName?: string | null;
+    shortDescription?: string | null;
+  } | null;
+};
+
+export type CodexSkillsListEntry = {
+  cwd: string;
+  skills: CodexSkill[];
+  errors: Array<{ message: string; path: string }>;
+};
+
+export type CodexSkillsResponse = {
+  data: CodexSkillsListEntry[];
+};
+
+export type RunInputItem =
+  | {
+      type: "mention";
+      name: string;
+      path: string;
+    }
+  | {
+      type: "skill";
+      name: string;
+      path: string;
+    }
+  | {
+      type: "mcp_resource";
+      server: string;
+      uri: string;
+      name?: string;
+      title?: string;
+    };
+
 export type RunStreamBody = {
   message: string;
   cwd?: string;
@@ -204,6 +267,7 @@ export type RunStreamBody = {
   network_access_enabled?: boolean;
   web_search_mode?: "disabled" | "cached" | "live";
   additional_directories?: string[];
+  input_items?: RunInputItem[];
 };
 
 export type BridgeSseEvent<T = Record<string, unknown>> = {

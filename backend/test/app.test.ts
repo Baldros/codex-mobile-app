@@ -210,7 +210,20 @@ describe("Codex bridge HTTP API", () => {
       readMcpResource: vi.fn(async () => ({
         contents: [{ uri: "docs://guide", mimeType: "text/plain", text: "MCP content" }]
       })),
-      reloadMcpServers: vi.fn(async () => ({}))
+      reloadMcpServers: vi.fn(async () => ({})),
+      listApps: vi.fn(async () => ({
+        data: [{ id: "github", name: "GitHub", isAccessible: true, isEnabled: true }],
+        nextCursor: null
+      })),
+      listSkills: vi.fn(async () => ({
+        data: [
+          {
+            cwd: process.cwd(),
+            skills: [{ name: "skill-creator", path: `${process.cwd()}\\SKILL.md`, enabled: true }],
+            errors: []
+          }
+        ]
+      }))
     };
     server = createServer(createApp({ config: testConfig(), threadService: mcpService as never }));
     baseUrl = await listen(server);
@@ -241,6 +254,26 @@ describe("Codex bridge HTTP API", () => {
     });
     expect(reloadResponse.status).toBe(200);
     expect(mcpService.reloadMcpServers).toHaveBeenCalledOnce();
+
+    const appsResponse = await fetch(`${baseUrl}/v1/apps?limit=10&thread_id=thr_1&force_refetch=true`);
+    const appsBody = (await appsResponse.json()) as { data: Array<{ id: string }> };
+    expect(appsResponse.status).toBe(200);
+    expect(appsBody.data[0]?.id).toBe("github");
+    expect(mcpService.listApps).toHaveBeenCalledWith({
+      limit: 10,
+      cursor: null,
+      threadId: "thr_1",
+      forceRefetch: true
+    });
+
+    const skillsResponse = await fetch(`${baseUrl}/v1/skills?cwd=${encodeURIComponent(process.cwd())}&force_reload=true`);
+    const skillsBody = (await skillsResponse.json()) as { data: Array<{ skills: Array<{ name: string }> }> };
+    expect(skillsResponse.status).toBe(200);
+    expect(skillsBody.data[0]?.skills[0]?.name).toBe("skill-creator");
+    expect(mcpService.listSkills).toHaveBeenCalledWith({
+      cwd: process.cwd(),
+      forceReload: true
+    });
   });
 });
 

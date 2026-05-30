@@ -39,6 +39,22 @@ type AppServerThread = {
   turns?: unknown[];
 };
 
+type AppServerUserInput =
+  | { type: "text"; text: string }
+  | { type: "mention"; name: string; path: string }
+  | { type: "skill"; name: string; path: string };
+
+type McpResourceReadResponse = {
+  contents?: Array<{
+    uri?: string;
+    mimeType?: string | null;
+    text?: string;
+    blob?: string;
+  }>;
+};
+
+const MAX_MCP_RESOURCE_TEXT_LENGTH = 40_000;
+
 export class AppServerBridgeService {
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly pendingApprovals = new Map<string, AppServerRequest>();
@@ -215,9 +231,10 @@ export class AppServerBridgeService {
         approvalsReviewer: "user"
       });
 
+      const turnInput = await this.buildTurnInput(input, threadId);
       const turnResponse = (await this.deps.client.request("turn/start", {
         threadId,
-        input: [{ type: "text", text: input.message }],
+        input: turnInput,
         cwd,
         approvalPolicy: input.approval_policy ?? "on-request",
         approvalsReviewer: "user",
@@ -343,6 +360,35 @@ export class AppServerBridgeService {
     });
   }
 
+  async listApps(params: {
+    limit?: number;
+    cursor?: string | null;
+    threadId?: string | null;
+    forceRefetch?: boolean;
+  } = {}) {
+    try {
+      return await this.deps.client.request("app/list", {
+        limit: params.limit ?? 50,
+        cursor: params.cursor ?? null,
+        threadId: params.threadId ?? null,
+        forceRefetch: params.forceRefetch ?? false
+      });
+    } catch (caught) {
+      throw new AppError(502, "apps_unavailable", sanitizeAppListError(caught));
+    }
+  }
+
+  async listSkills(params: { cwd?: string | null; forceReload?: boolean } = {}) {
+    const cwds = params.cwd
+      ? [this.deps.workspaceService.assertAllowed(params.cwd)]
+      : this.deps.workspaceService.getAllowedRoots();
+
+    return this.deps.client.request("skills/list", {
+      cwds,
+      forceReload: params.forceReload ?? false
+    });
+  }
+
   async listMcpServers(
     params: { detail?: "full" | "toolsAndAuthOnly"; limit?: number; cursor?: string | null } = {}
   ) {
@@ -383,6 +429,35 @@ export class AppServerBridgeService {
       resolved: true,
       approval_id: requestId
     };
+  }
+
+  private async buildTurnInput(input: RunStreamBody, threadId: string): Promise<AppServerUserInput[]> {
+    const turnInput: AppServerUserInput[] = [{ type: "text", text: input.message }];
+
+    for (const item of input.input_items ?? []) {
+      if (item.type === "mention" || item.type === "skill") {
+        turnInput.push({
+          type: item.type,
+          name: item.name,
+          path: item.path
+        });
+        continue;
+      }
+
+      if (item.type === "mcp_resource") {
+        const resource = (await this.readMcpResource({
+          server: item.server,
+          uri: item.uri,
+          threadId
+        })) as McpResourceReadResponse;
+        turnInput.push({
+          type: "text",
+          text: formatMcpResourceForPrompt(item, resource)
+        });
+      }
+    }
+
+    return turnInput;
   }
 }
 
@@ -459,4 +534,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sanitizeAppListError(error: unknown) {
+  const message = errorMessage(error);
+  if (/403|forbidden/i.test(message)) {
+    return "Failed to list apps: Codex app registry returned 403 Forbidden.";
+  }
+
+  const withoutHtml = message.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return withoutHtml.length > 240 ? `${withoutHtml.slice(0, 240)}...` : withoutHtml;
+}
+
+function formatMcpResourceForPrompt(
+  item: Extract<NonNullable<RunStreamBody["input_items"]>[number], { type: "mcp_resource" }>,
+  resource: McpResourceReadResponse
+) {
+  const label = item.title ?? item.name ?? item.uri;
+  const content = (resource.contents ?? [])
+    .map((entry) => {
+      if (entry.text) {
+        return entry.text;
+      }
+      if (entry.blob) {
+        return `[binary resource: ${entry.mimeType ?? "application/octet-stream"} at ${entry.uri ?? item.uri}]`;
+      }
+      return `[empty resource content at ${entry.uri ?? item.uri}]`;
+    })
+    .join("\n\n");
+
+  const trimmed =
+    content.length > MAX_MCP_RESOURCE_TEXT_LENGTH
+      ? `${content.slice(0, MAX_MCP_RESOURCE_TEXT_LENGTH)}\n\n[resource truncated]`
+      : content;
+
+  return [
+    `MCP resource selected by the user: ${label}`,
+    `Server: ${item.server}`,
+    `URI: ${item.uri}`,
+    "",
+    trimmed || "[resource returned no content]"
+  ].join("\n");
 }

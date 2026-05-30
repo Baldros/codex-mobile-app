@@ -6,8 +6,10 @@ import type {
   BridgeSseEvent,
   BridgeThread,
   CodexAccountResponse,
+  CodexAppsResponse,
   CodexConfigResponse,
   CodexModel,
+  CodexSkillsResponse,
   McpResourceReadResponse,
   McpServerStatusResponse,
   PendingApproval,
@@ -144,6 +146,35 @@ export class BridgeClient {
         merge_strategy: "replace"
       })
     });
+  }
+
+  async listApps(params: { limit?: number; cursor?: string | null; threadId?: string | null; forceRefetch?: boolean } = {}) {
+    const query = new URLSearchParams();
+    query.set("limit", String(params.limit ?? 50));
+    if (params.cursor) {
+      query.set("cursor", params.cursor);
+    }
+    if (params.threadId) {
+      query.set("thread_id", params.threadId);
+    }
+    if (params.forceRefetch) {
+      query.set("force_refetch", "true");
+    }
+
+    return this.requestJson<CodexAppsResponse>(`/v1/apps?${query.toString()}`);
+  }
+
+  async listSkills(params: { cwd?: string; forceReload?: boolean } = {}) {
+    const query = new URLSearchParams();
+    if (params.cwd) {
+      query.set("cwd", params.cwd);
+    }
+    if (params.forceReload) {
+      query.set("force_reload", "true");
+    }
+
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return this.requestJson<CodexSkillsResponse>(`/v1/skills${suffix}`);
   }
 
   async listMcpServers(params: { detail?: "full" | "toolsAndAuthOnly"; limit?: number; cursor?: string | null } = {}) {

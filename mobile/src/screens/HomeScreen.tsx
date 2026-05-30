@@ -4,6 +4,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Database,
   FolderGit2,
   Gauge,
   ListTree,
@@ -49,11 +50,16 @@ import type {
   ChatMessage,
   ChatMessagePart,
   CodexAccountResponse,
+  CodexApp,
   CodexModel,
+  CodexSkill,
+  McpResource,
+  McpServerStatus,
   PendingApproval,
   RateLimitSnapshot,
   RateLimitWindow,
-  ReasoningEffort
+  ReasoningEffort,
+  RunInputItem
 } from "../domain/bridge";
 import { useBridge } from "../state/BridgeProvider";
 import { colors, radii, spacing } from "../theme/colors";
@@ -62,19 +68,41 @@ import { compactPath } from "../utils/format";
 
 type MenuPanel = "main" | "models" | "effort" | "fast";
 const keyboardComposerGap = spacing.xl + spacing.xs;
+type ComposerMentionKind = "app" | "skill" | "mcp_resource";
+type ComposerMention = {
+  id: string;
+  kind: ComposerMentionKind;
+  token: string;
+  label: string;
+  detail?: string | null;
+  inputItem: RunInputItem;
+};
 
 export function HomeScreen() {
   const bridge = useBridge();
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState("");
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [selectedMentions, setSelectedMentions] = useState<ComposerMention[]>([]);
   const [limitsVisible, setLimitsVisible] = useState(false);
   const messageListRef = useRef<FlatList<ChatMessage> | null>(null);
+  const mentionLoadRequested = useRef(false);
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
     [bridge.models, bridge.selectedModelId]
   );
   const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
+  const mentionTrigger = useMemo(() => activeMentionTrigger(draft), [draft]);
+  const mentionItems = useMemo(
+    () =>
+      buildMentionItems(
+        bridge.apps,
+        bridge.skills,
+        bridge.mcpServers,
+        mentionTrigger?.query ?? ""
+      ),
+    [bridge.apps, bridge.skills, bridge.mcpServers, mentionTrigger?.query]
+  );
   const composerBottomPadding =
     spacing.md + (Platform.OS === "android" && keyboardVisible ? keyboardComposerGap : insets.bottom);
   const latestMessageMarker = useMemo(() => {
@@ -126,6 +154,50 @@ export function HomeScreen() {
       hideSubscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    mentionLoadRequested.current = false;
+  }, [bridge.selectedWorkspace?.path, bridge.selectedThread?.id]);
+
+  useEffect(() => {
+    if (!mentionTrigger || mentionLoadRequested.current) {
+      return;
+    }
+
+    mentionLoadRequested.current = true;
+    void bridge.refreshMentions();
+  }, [bridge, mentionTrigger]);
+
+  const handleDraftChange = (next: string) => {
+    setDraft(next);
+    setSelectedMentions((current) => current.filter((mention) => next.includes(mention.token)));
+  };
+
+  const handleMentionSelect = (mention: ComposerMention) => {
+    const trigger = activeMentionTrigger(draft);
+    if (!trigger) {
+      return;
+    }
+
+    const nextDraft = `${draft.slice(0, trigger.start)}${mention.token} ${draft.slice(trigger.end)}`;
+    setDraft(nextDraft);
+    setSelectedMentions((current) =>
+      current.some((item) => item.id === mention.id) ? current : [...current, mention]
+    );
+  };
+
+  const removeMention = (mention: ComposerMention) => {
+    setSelectedMentions((current) => current.filter((item) => item.id !== mention.id));
+    setDraft((current) => current.replace(mention.token, "").replace(/\s{2,}/g, " "));
+  };
+
+  const handleSend = () => {
+    const value = draft;
+    const inputItems = selectedMentions.map((mention) => mention.inputItem);
+    setDraft("");
+    setSelectedMentions([]);
+    void bridge.sendMessage(value, inputItems);
+  };
 
   return (
     <Screen>
@@ -195,43 +267,70 @@ export function HomeScreen() {
           }
         />
 
+        {mentionTrigger ? (
+          <MentionPalette
+            items={mentionItems}
+            query={mentionTrigger.query}
+            loading={bridge.isRefreshingMentions}
+            error={bridge.mentionError}
+            onRefresh={() => void bridge.refreshMentions()}
+            onSelect={handleMentionSelect}
+          />
+        ) : null}
+
         <View style={[styles.composer, { paddingBottom: composerBottomPadding }]}>
-          <ComposerMenu
-            selectedModel={selectedModel}
-            onOpenLimits={() => {
-              setLimitsVisible(true);
-              void bridge.refreshAccount();
-            }}
-          />
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            multiline
-            placeholder="Message Codex"
-            placeholderTextColor={colors.textSubtle}
-            onBlur={() => setKeyboardVisible(false)}
-            onFocus={() => {
-              if (Platform.OS === "android" && Keyboard.isVisible()) {
-                setKeyboardVisible(true);
-              }
-            }}
-            style={styles.input}
-          />
-          {bridge.isRunning ? (
-            <IconAction icon={Square} label="Cancel" variant="danger" onPress={() => void bridge.cancelRun()} />
-          ) : (
-            <IconAction
-              icon={Send}
-              label="Send"
-              variant="filled"
-              disabled={!canSend}
-              onPress={() => {
-                const value = draft;
-                setDraft("");
-                void bridge.sendMessage(value);
+          <View style={styles.composerRow}>
+            <ComposerMenu
+              selectedModel={selectedModel}
+              onOpenLimits={() => {
+                setLimitsVisible(true);
+                void bridge.refreshAccount();
               }}
             />
-          )}
+            <View style={styles.composerInputWrap}>
+              {selectedMentions.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mentionChips}>
+                  {selectedMentions.map((mention) => (
+                    <Pressable
+                      key={mention.id}
+                      onPress={() => removeMention(mention)}
+                      style={({ pressed }) => [styles.mentionChip, pressed && styles.menuItemPressed]}
+                    >
+                      <Text numberOfLines={1} style={styles.mentionChipText}>
+                        {mention.token}
+                      </Text>
+                      <X size={12} color={colors.accent} />
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : null}
+              <TextInput
+                value={draft}
+                onChangeText={handleDraftChange}
+                multiline
+                placeholder="Message Codex"
+                placeholderTextColor={colors.textSubtle}
+                onBlur={() => setKeyboardVisible(false)}
+                onFocus={() => {
+                  if (Platform.OS === "android" && Keyboard.isVisible()) {
+                    setKeyboardVisible(true);
+                  }
+                }}
+                style={styles.input}
+              />
+            </View>
+            {bridge.isRunning ? (
+              <IconAction icon={Square} label="Cancel" variant="danger" onPress={() => void bridge.cancelRun()} />
+            ) : (
+              <IconAction
+                icon={Send}
+                label="Send"
+                variant="filled"
+                disabled={!canSend}
+                onPress={handleSend}
+              />
+            )}
+          </View>
         </View>
       </KeyboardAvoidingView>
     </Screen>
@@ -397,6 +496,103 @@ function ComposerMenu({
       </Modal>
     </>
   );
+}
+
+function MentionPalette({
+  items,
+  query,
+  loading,
+  error,
+  onRefresh,
+  onSelect
+}: {
+  items: ComposerMention[];
+  query: string;
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  onSelect: (mention: ComposerMention) => void;
+}) {
+  const apps = items.filter((item) => item.kind === "app");
+  const skills = items.filter((item) => item.kind === "skill");
+  const resources = items.filter((item) => item.kind === "mcp_resource");
+
+  return (
+    <View style={styles.mentionPalette}>
+      <View style={styles.mentionPaletteHeader}>
+        <Text numberOfLines={1} style={styles.mentionPaletteTitle}>
+          ${query}
+        </Text>
+        {loading ? <ActivityIndicator size="small" color={colors.accent} /> : null}
+        <IconAction icon={RefreshCcw} label="Refresh mentions" onPress={onRefresh} />
+      </View>
+      {error ? (
+        <Text numberOfLines={2} style={styles.mentionError}>
+          {error}
+        </Text>
+      ) : null}
+      <ScrollView style={styles.mentionList} keyboardShouldPersistTaps="handled">
+        <MentionSection title="Apps" items={apps} icon="app" onSelect={onSelect} />
+        <MentionSection title="Skills" items={skills} icon="skill" onSelect={onSelect} />
+        <MentionSection title="MCP resources" items={resources} icon="mcp" onSelect={onSelect} />
+        {!loading && items.length === 0 ? (
+          <Text style={styles.mentionEmpty}>No matches</Text>
+        ) : null}
+      </ScrollView>
+    </View>
+  );
+}
+
+function MentionSection({
+  title,
+  items,
+  icon,
+  onSelect
+}: {
+  title: string;
+  items: ComposerMention[];
+  icon: "app" | "skill" | "mcp";
+  onSelect: (mention: ComposerMention) => void;
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <View style={styles.mentionSection}>
+      <Text style={styles.mentionSectionTitle}>{title}</Text>
+      {items.map((item) => (
+        <Pressable
+          key={item.id}
+          onPress={() => onSelect(item)}
+          style={({ pressed }) => [styles.mentionItem, pressed && styles.menuItemPressed]}
+        >
+          <View style={styles.mentionIcon}>{mentionIcon(icon)}</View>
+          <View style={styles.mentionItemText}>
+            <Text numberOfLines={1} style={styles.mentionItemLabel}>
+              {item.label}
+            </Text>
+            <Text numberOfLines={1} style={styles.mentionItemDetail}>
+              {item.detail ?? item.token}
+            </Text>
+          </View>
+          <Text numberOfLines={1} style={styles.mentionToken}>
+            {item.token}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function mentionIcon(icon: "app" | "skill" | "mcp") {
+  if (icon === "skill") {
+    return <Bot size={14} color={colors.accent} />;
+  }
+  if (icon === "mcp") {
+    return <Database size={14} color={colors.accent} />;
+  }
+  return <Zap size={14} color={colors.accent} />;
 }
 
 function MenuItem({
@@ -966,6 +1162,104 @@ function panelTitle(panel: MenuPanel) {
   }
 }
 
+function activeMentionTrigger(value: string) {
+  const match = value.match(/(^|\s)\$([^\s$]*)$/);
+  if (!match || match.index === undefined) {
+    return null;
+  }
+
+  const prefix = match[1] ?? "";
+  const query = match[2] ?? "";
+  const start = match.index + prefix.length;
+  return {
+    start,
+    end: value.length,
+    query
+  };
+}
+
+function buildMentionItems(
+  apps: CodexApp[],
+  skills: CodexSkill[],
+  mcpServers: McpServerStatus[],
+  query: string
+): ComposerMention[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  const appItems = apps
+    .map((app): ComposerMention => ({
+      id: `app:${app.id}`,
+      kind: "app",
+      token: `$${safeToken(app.id)}`,
+      label: app.name,
+      detail: app.description ?? null,
+      inputItem: {
+        type: "mention",
+        name: app.name,
+        path: `app://${app.id}`
+      }
+    }))
+    .filter((item) => mentionMatches(item, normalizedQuery))
+    .slice(0, 8);
+
+  const skillItems = skills
+    .map((skill): ComposerMention => ({
+      id: `skill:${skill.path}`,
+      kind: "skill",
+      token: `$${safeToken(skill.name)}`,
+      label: skill.interface?.displayName ?? skill.name,
+      detail: skill.interface?.shortDescription ?? skill.shortDescription ?? skill.description ?? null,
+      inputItem: {
+        type: "skill",
+        name: skill.name,
+        path: skill.path
+      }
+    }))
+    .filter((item) => mentionMatches(item, normalizedQuery))
+    .slice(0, 8);
+
+  const resourceItems = mcpServers
+    .flatMap((server) =>
+      server.resources.map((resource) => mcpResourceMention(server.name, resource))
+    )
+    .filter((item) => mentionMatches(item, normalizedQuery))
+    .slice(0, 10);
+
+  return [...appItems, ...skillItems, ...resourceItems];
+}
+
+function mcpResourceMention(serverName: string, resource: McpResource): ComposerMention {
+  const resourceName = resource.title ?? resource.name;
+  return {
+    id: `mcp:${serverName}:${resource.uri}`,
+    kind: "mcp_resource",
+    token: `$${safeToken(serverName)}:${safeToken(resource.name || "resource")}`,
+    label: resourceName,
+    detail: resource.description ?? resource.uri,
+    inputItem: {
+      type: "mcp_resource",
+      server: serverName,
+      uri: resource.uri,
+      name: resource.name,
+      ...(resource.title ? { title: resource.title } : {})
+    }
+  };
+}
+
+function mentionMatches(item: ComposerMention, query: string) {
+  if (!query) {
+    return true;
+  }
+
+  return [item.token, item.label, item.detail]
+    .filter((value): value is string => typeof value === "string")
+    .some((value) => value.toLowerCase().includes(query));
+}
+
+function safeToken(value: string) {
+  const cleaned = value.trim().replace(/\s+/g, "-");
+  return cleaned.length > 0 ? cleaned : "item";
+}
+
 const styles = StyleSheet.create({
   keyboard: {
     flex: 1
@@ -1246,10 +1540,17 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    backgroundColor: colors.background,
+    backgroundColor: colors.background
+  },
+  composerRow: {
     flexDirection: "row",
     alignItems: "flex-end",
     gap: spacing.sm
+  },
+  composerInputWrap: {
+    flex: 1,
+    minWidth: 0,
+    gap: spacing.xs
   },
   composerMenuButton: {
     width: 44,
@@ -1266,7 +1567,6 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.98 }]
   },
   input: {
-    flex: 1,
     minHeight: 44,
     maxHeight: 118,
     borderRadius: radii.md,
@@ -1279,6 +1579,115 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: fontWeights.body,
     lineHeight: 20
+  },
+  mentionChips: {
+    gap: spacing.xs,
+    paddingRight: spacing.sm
+  },
+  mentionChip: {
+    maxWidth: 180,
+    minHeight: 28,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+    paddingHorizontal: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  mentionChipText: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: fontWeights.action
+  },
+  mentionPalette: {
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "rgba(255, 255, 255, 0.98)",
+    padding: spacing.sm,
+    maxHeight: 280
+  },
+  mentionPaletteHeader: {
+    minHeight: 34,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  mentionPaletteTitle: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: fontWeights.action
+  },
+  mentionError: {
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: fontWeights.subtitle,
+    marginBottom: spacing.xs
+  },
+  mentionList: {
+    maxHeight: 226
+  },
+  mentionSection: {
+    gap: spacing.xs,
+    marginTop: spacing.xs
+  },
+  mentionSectionTitle: {
+    color: colors.textSubtle,
+    fontSize: 10,
+    fontWeight: fontWeights.label,
+    textTransform: "uppercase"
+  },
+  mentionItem: {
+    minHeight: 48,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.surfaceMuted,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  mentionIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.accentSoft,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  mentionItemText: {
+    flex: 1,
+    minWidth: 0
+  },
+  mentionItemLabel: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: fontWeights.action
+  },
+  mentionItemDetail: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: fontWeights.body,
+    marginTop: 2
+  },
+  mentionToken: {
+    maxWidth: 110,
+    color: colors.accent,
+    fontSize: 11,
+    fontWeight: fontWeights.action
+  },
+  mentionEmpty: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    paddingVertical: spacing.sm
   },
   limitsOverlay: {
     flex: 1,

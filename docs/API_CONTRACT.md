@@ -85,9 +85,19 @@ Accept: text/event-stream
   "message": "Rode os testes e corrija a falha",
   "cwd": "E:\\codex-mobile-app",
   "approval_policy": "on-request",
-  "sandbox_mode": "workspace-write"
+  "sandbox_mode": "workspace-write",
+  "input_items": [
+    { "type": "mention", "name": "GitHub", "path": "app://github" },
+    { "type": "skill", "name": "openai-docs", "path": "C:\\Users\\me\\.codex\\skills\\openai-docs\\SKILL.md" },
+    { "type": "mcp_resource", "server": "docs", "uri": "docs://guide", "name": "Guide" }
+  ]
 }
 ```
+
+`input_items` e opcional e representa selecoes estruturadas feitas pelo composer
+mobile quando o usuario usa o palette de `$`. Apps e skills sao repassados ao
+`codex app-server` como itens `mention` e `skill`. Recursos MCP sao lidos pelo
+Bridge e anexados ao turno como contexto textual.
 
 Resposta SSE:
 
@@ -271,6 +281,30 @@ GET /v1/settings/features
 ```
 
 Lista feature flags conhecidas pelo Codex.
+
+## Apps e Skills
+
+```http
+GET /v1/apps?limit=50&cursor=<cursor>&thread_id=thr_123&force_refetch=false
+```
+
+Lista apps/conectores disponiveis para o usuario. O mobile usa esse inventario
+para resolver selecoes do palette `$` em itens estruturados:
+
+```json
+{ "type": "mention", "name": "GitHub", "path": "app://github" }
+```
+
+```http
+GET /v1/skills?cwd=E%3A%5Ccodex-mobile-app&force_reload=false
+```
+
+Lista skills disponiveis para o workspace. O mobile usa esse inventario para
+resolver selecoes do palette `$` em itens estruturados:
+
+```json
+{ "type": "skill", "name": "openai-docs", "path": "C:\\Users\\me\\.codex\\skills\\openai-docs\\SKILL.md" }
+```
 
 ## MCP
 

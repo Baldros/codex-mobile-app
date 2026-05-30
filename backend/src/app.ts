@@ -251,6 +251,26 @@ async function routeRequest(
     return;
   }
 
+  if (method === "GET" && pathname === "/v1/apps") {
+    const capability = requireCapability(threadService, "listApps");
+    sendJson(res, 200, await capability({
+      limit: parsePositiveInt(url.searchParams.get("limit")) ?? 50,
+      cursor: url.searchParams.get("cursor"),
+      threadId: url.searchParams.get("thread_id"),
+      forceRefetch: url.searchParams.get("force_refetch") === "true"
+    }));
+    return;
+  }
+
+  if (method === "GET" && pathname === "/v1/skills") {
+    const capability = requireCapability(threadService, "listSkills");
+    sendJson(res, 200, await capability({
+      cwd: url.searchParams.get("cwd"),
+      forceReload: url.searchParams.get("force_reload") === "true"
+    }));
+    return;
+  }
+
   if (method === "GET" && pathname === "/v1/mcp/servers") {
     const capability = requireCapability(threadService, "listMcpServers");
     sendJson(res, 200, await capability({
@@ -339,6 +359,12 @@ function buildCapabilitiesResponse(
       list: typeof threadService.listMcpServers === "function",
       read: typeof threadService.readMcpResource === "function",
       reload: typeof threadService.reloadMcpServers === "function"
+    },
+    apps: {
+      list: typeof threadService.listApps === "function"
+    },
+    skills: {
+      list: typeof threadService.listSkills === "function"
     },
     workspaces: workspaceService.capabilities()
   };
