@@ -27,6 +27,8 @@ id_ecdsa*
 *.mobileprovision
 *.jks
 *.keystore
+# Keep the standard public Android debug keystore so CI can sign debug builds.
+!mobile/android/app/debug.keystore
 
 *.log
 *.tmp

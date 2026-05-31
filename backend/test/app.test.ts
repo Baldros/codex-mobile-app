@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -170,10 +171,11 @@ describe("Codex bridge HTTP API", () => {
   });
 
   it("rejects workspaces outside the allowlist", async () => {
+    const outsideWorkspace = path.resolve(process.cwd(), "..", "outside-allowlist");
     const response = await fetch(`${baseUrl}/v1/threads`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workspace: "C:\\Windows" })
+      body: JSON.stringify({ workspace: outsideWorkspace })
     });
     const body = (await response.json()) as { error: { code: string } };
 
