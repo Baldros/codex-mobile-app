@@ -101,6 +101,21 @@ export function mapAppServerNotification(
       ];
     }
 
+    case "turn/diff/updated":
+      return [
+        {
+          event: "file_change",
+          data: {
+            thread_id: threadId,
+            run_id: turnId,
+            item_id: `turn_diff_${turnId}`,
+            kind: "file_change",
+            diff: params.diff,
+            status: "completed"
+          }
+        }
+      ];
+
     case "error":
       return [
         {
@@ -224,6 +239,7 @@ function mapAppServerItem(
             thread_id: threadId,
             run_id: turnId,
             item_id: item.id,
+            kind: "file_change",
             changes: item.changes,
             status: item.status
           }
@@ -244,6 +260,12 @@ function mapAppServerItem(
             tool: item.tool,
             server: item.server,
             query: item.query,
+            arguments: item.arguments,
+            result: item.result,
+            content_items: item.contentItems,
+            success: item.success,
+            duration_ms: item.durationMs,
+            action: item.action,
             status: item.status,
             error: item.error
           }

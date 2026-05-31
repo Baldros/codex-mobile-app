@@ -1,6 +1,19 @@
-import { AlertCircle, Check, CheckCircle2, Clock3, ShieldCheck, Terminal, X } from "lucide-react-native";
+import {
+  AlertCircle,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Clock3,
+  Code2,
+  FileCode2,
+  ShieldCheck,
+  Terminal,
+  X
+} from "lucide-react-native";
+import type React from "react";
 import { useMemo, useState } from "react";
-import { ActivityIndicator, PanResponder, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Modal, PanResponder, Pressable, ScrollView, Text, View } from "react-native";
 
 import { MarkdownText } from "../../components/MarkdownText";
 import type { ChatMessage, ChatMessagePart, PendingApproval } from "../../domain/bridge";
@@ -152,14 +165,24 @@ function ActivityTimelinePart({
   part: Extract<ChatMessagePart, { type: "activity" }>;
   isFirst: boolean;
 }) {
+  const [detailsVisible, setDetailsVisible] = useState(false);
   const tone = activityTone(part.status);
+  const canOpenDetails = hasToolDetails(part);
 
   return (
     <View style={[styles.timelineRow, !isFirst && styles.messagePartSpacing]}>
       <View style={styles.timelineRail}>
         <View style={[styles.timelineNode, { backgroundColor: tone.color }]} />
       </View>
-      <View style={[styles.timelineCard, { borderColor: tone.border, backgroundColor: tone.background }]}>
+      <Pressable
+        disabled={!canOpenDetails}
+        onPress={() => setDetailsVisible(true)}
+        style={[
+          styles.timelineCard,
+          canOpenDetails && styles.timelineCardPressable,
+          { borderColor: tone.border, backgroundColor: tone.background }
+        ]}
+      >
         <View style={styles.timelineHeader}>
           <View style={styles.timelineTitleWrap}>
             <Terminal size={14} color={tone.color} />
@@ -173,18 +196,88 @@ function ActivityTimelinePart({
             {part.status === "failed" ? <X size={12} color={tone.color} /> : null}
             <Text style={[styles.timelineStatusText, { color: tone.color }]}>{tone.label}</Text>
           </View>
+          {canOpenDetails ? <ChevronRight size={15} color={colors.textMuted} /> : null}
         </View>
-        {part.detail ? (
-          <Text numberOfLines={3} style={styles.timelineDetail}>
-            {part.detail}
-          </Text>
-        ) : null}
-        {part.output ? (
-          <Text numberOfLines={4} style={styles.timelineOutput}>
-            {part.output}
-          </Text>
-        ) : null}
+      </Pressable>
+      <ToolDetailsModal
+        visible={detailsVisible}
+        part={part}
+        onClose={() => setDetailsVisible(false)}
+      />
+    </View>
+  );
+}
+
+function ToolDetailsModal({
+  visible,
+  part,
+  onClose
+}: {
+  visible: boolean;
+  part: Extract<ChatMessagePart, { type: "activity" }>;
+  onClose: () => void;
+}) {
+  const sections = toolDetailSections(part);
+
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+      <View style={styles.toolDetailsOverlay}>
+        <View style={styles.toolDetailsPanel}>
+          <View style={styles.toolDetailsHeader}>
+            <View style={styles.toolDetailsTitleWrap}>
+              <Text numberOfLines={1} style={styles.toolDetailsTitle}>{part.title}</Text>
+              <Text style={styles.toolDetailsSubtitle}>{activityTone(part.status).label}</Text>
+            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close tool details" onPress={onClose} style={styles.toolDetailsClose}>
+              <X size={18} color={colors.text} />
+            </Pressable>
+          </View>
+          <ScrollView style={styles.toolDetailsScroll} contentContainerStyle={styles.toolDetailsContent}>
+            {sections.map((section) => (
+              <ToolDetailsSection
+                key={section.id}
+                title={section.title}
+                icon={section.icon}
+                {...(section.tone ? { tone: section.tone } : {})}
+              >
+                {section.content}
+              </ToolDetailsSection>
+            ))}
+          </ScrollView>
+        </View>
       </View>
+    </Modal>
+  );
+}
+
+function ToolDetailsSection({
+  title,
+  icon,
+  tone,
+  children
+}: {
+  title: string;
+  icon: "terminal" | "file" | "code" | "alert";
+  tone?: "danger";
+  children: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const Icon = icon === "file" ? FileCode2 : icon === "alert" ? AlertCircle : icon === "code" ? Code2 : Terminal;
+  const color = tone === "danger" ? colors.danger : colors.accent;
+
+  return (
+    <View style={styles.toolDetailSection}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? `Collapse ${title}` : `Expand ${title}`}
+        onPress={() => setExpanded((current) => !current)}
+        style={styles.toolDetailSectionHeader}
+      >
+        <Icon size={15} color={color} />
+        <Text style={styles.toolDetailSectionTitle}>{title}</Text>
+        {expanded ? <ChevronDown size={16} color={colors.textMuted} /> : <ChevronRight size={16} color={colors.textMuted} />}
+      </Pressable>
+      {expanded ? <View style={styles.toolDetailSectionBody}>{children}</View> : null}
     </View>
   );
 }
@@ -265,6 +358,185 @@ function messageParts(message: ChatMessage): ChatMessagePart[] {
     ];
   }
   return [];
+}
+
+function hasToolDetails(part: Extract<ChatMessagePart, { type: "activity" }>) {
+  return Boolean(part.detail || part.output || part.toolDetails);
+}
+
+function toolDetailSections(part: Extract<ChatMessagePart, { type: "activity" }>) {
+  const details = part.toolDetails ?? {};
+  const sections: Array<{
+    id: string;
+    title: string;
+    icon: "terminal" | "file" | "code" | "alert";
+    tone?: "danger";
+    content: React.ReactNode;
+  }> = [];
+
+  const command = formatCommand(details.command);
+  if (command || details.cwd) {
+    sections.push({
+      id: "command",
+      title: "Command",
+      icon: "terminal",
+      content: (
+        <View style={styles.toolDetailRows}>
+          {command ? <ToolCodeBlock text={command} /> : null}
+          {typeof details.cwd === "string" ? <ToolKeyValue label="cwd" value={details.cwd} /> : null}
+          {details.exitCode !== undefined ? <ToolKeyValue label="exit code" value={String(details.exitCode)} /> : null}
+          {details.durationMs !== undefined ? <ToolKeyValue label="duration" value={`${details.durationMs} ms`} /> : null}
+        </View>
+      )
+    });
+  }
+
+  const changes = Array.isArray(details.changes) ? details.changes : [];
+  if (changes.length > 0) {
+    sections.push({
+      id: "changes",
+      title: "File Changes",
+      icon: "file",
+      content: (
+        <View style={styles.toolDetailRows}>
+          {changes.map((change, index) => {
+            const record = asRecord(change);
+            const path = stringValue(record.path) ?? `Change ${index + 1}`;
+            const kind = stringValue(record.kind);
+            const diff = stringValue(record.diff);
+            return (
+              <View key={`${path}-${index}`} style={styles.toolChangeBlock}>
+                <Text style={styles.toolChangePath}>{path}</Text>
+                {kind ? <Text style={styles.toolChangeKind}>{kind}</Text> : null}
+                {diff ? <ToolCodeBlock text={diff} /> : null}
+              </View>
+            );
+          })}
+        </View>
+      )
+    });
+  }
+
+  const diff = stringValue(details.diff);
+  if (diff) {
+    sections.push({
+      id: "diff",
+      title: "Diff",
+      icon: "file",
+      content: <ToolCodeBlock text={diff} />
+    });
+  }
+
+  const output = stringValue(details.output) ?? part.output;
+  if (output) {
+    sections.push({
+      id: "output",
+      title: "Output",
+      icon: "code",
+      content: <ToolCodeBlock text={output} />
+    });
+  }
+
+  if (details.error !== undefined || part.status === "failed") {
+    sections.push({
+      id: "error",
+      title: "Error",
+      icon: "alert",
+      tone: "danger",
+      content: <ToolCodeBlock text={formatValue(details.error ?? part.detail ?? "Tool failed.")} />
+    });
+  }
+
+  const metadata = metadataRows(details);
+  if (metadata.length > 0) {
+    sections.push({
+      id: "metadata",
+      title: "Metadata",
+      icon: "code",
+      content: (
+        <View style={styles.toolDetailRows}>
+          {metadata.map(([label, value]) => <ToolKeyValue key={label} label={label} value={value} />)}
+        </View>
+      )
+    });
+  }
+
+  if (details.raw !== undefined) {
+    sections.push({
+      id: "raw",
+      title: "Raw Event",
+      icon: "code",
+      content: <ToolCodeBlock text={formatValue(details.raw)} />
+    });
+  }
+
+  if (sections.length === 0) {
+    sections.push({
+      id: "summary",
+      title: "Summary",
+      icon: "code",
+      content: <ToolCodeBlock text={part.detail ?? "No details available."} />
+    });
+  }
+
+  return sections;
+}
+
+function ToolCodeBlock({ text }: { text: string }) {
+  return (
+    <Text selectable style={styles.toolDetailCode}>
+      {text || " "}
+    </Text>
+  );
+}
+
+function ToolKeyValue({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.toolKeyValueRow}>
+      <Text style={styles.toolKey}>{label}</Text>
+      <Text selectable style={styles.toolValue}>{value}</Text>
+    </View>
+  );
+}
+
+function metadataRows(details: Record<string, unknown>): Array<[string, string]> {
+  return [
+    ["kind", stringValue(details.kind)],
+    ["status", stringValue(details.status)],
+    ["server", stringValue(details.server)],
+    ["tool", stringValue(details.tool)],
+    ["query", stringValue(details.query)],
+    ["success", details.success === undefined ? null : String(details.success)]
+  ].filter((row): row is [string, string] => typeof row[1] === "string" && row[1].length > 0);
+}
+
+function formatCommand(command: unknown) {
+  if (Array.isArray(command)) {
+    return command.map((part) => String(part)).join(" ");
+  }
+  return stringValue(command);
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function formatValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function deliveryTone(status: NonNullable<ChatMessage["deliveryStatus"]>) {

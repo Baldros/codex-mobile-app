@@ -1109,7 +1109,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         id: asString(data.item_id) ?? createId("tool"),
         title: toolTitle(data),
         detail: toolDetail(data),
-        status: "running"
+        status: "running",
+        toolDetails: toolDetails(data)
       } as const;
       addOrUpdateActivity(activity);
       addOrUpdateAssistantActivity(assistantMessageId, activity);
@@ -1121,7 +1122,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         id: asString(data.item_id) ?? createId("tool"),
         title: toolTitle(data),
         detail: toolDetail(data),
-        status: isFailedStatus(data.status) ? "failed" : "done"
+        status: isFailedStatus(data.status) ? "failed" : "done",
+        toolDetails: toolDetails(data)
       } as const;
       addOrUpdateActivity(activity);
       addOrUpdateAssistantActivity(assistantMessageId, activity);
@@ -1134,7 +1136,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         id: asString(data.item_id) ?? createId("command"),
         title: "Command output",
         detail: trimMiddle(asString(data.output) ?? "", 180),
-        status: "running"
+        status: "running",
+        toolDetails: toolDetails(data)
       } as const;
       addOrUpdateActivity(activity);
       appendAssistantActivityOutput(
@@ -1182,7 +1185,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         id: asString(data.item_id) ?? createId("file"),
         title: "File change",
         detail: asString(data.status) ?? undefined,
-        status: "info"
+        status: isFailedStatus(data.status) ? "failed" : "done",
+        toolDetails: toolDetails(data)
       } as const;
       addOrUpdateActivity(activity);
       addOrUpdateAssistantActivity(assistantMessageId, activity);
@@ -1730,4 +1734,26 @@ function toolDetail(data: Record<string, unknown>) {
     return command;
   }
   return asString(data.query) ?? asString(data.cwd) ?? undefined;
+}
+
+function toolDetails(data: Record<string, unknown>) {
+  return {
+    kind: data.kind,
+    command: data.command,
+    cwd: data.cwd,
+    output: data.output,
+    exitCode: data.exit_code,
+    status: data.status,
+    durationMs: data.duration_ms,
+    server: data.server,
+    tool: data.tool,
+    query: data.query,
+    arguments: data.arguments,
+    result: data.result,
+    error: data.error,
+    changes: data.changes,
+    diff: data.diff,
+    action: data.action,
+    raw: data
+  };
 }

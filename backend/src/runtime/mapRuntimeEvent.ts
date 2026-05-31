@@ -160,6 +160,7 @@ function mapItemEvent(
             thread_id: context.threadId,
             run_id: context.runId,
             item_id: threadEventItem.id,
+            kind: "file_change",
             changes: threadEventItem.changes,
             status: threadEventItem.status
           }

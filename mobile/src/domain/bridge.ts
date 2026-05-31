@@ -293,6 +293,7 @@ export type ChatActivityPart = {
   detail?: string | undefined;
   output?: string | undefined;
   status: ChatActivityStatus;
+  toolDetails?: Record<string, unknown> | undefined;
 };
 
 export type ChatApprovalPart = {
@@ -320,6 +321,7 @@ export type ActivityItem = {
   title: string;
   detail?: string | undefined;
   status: "running" | "done" | "failed" | "info";
+  toolDetails?: Record<string, unknown> | undefined;
 };
 
 export type PendingApproval = {

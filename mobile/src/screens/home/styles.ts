@@ -258,6 +258,9 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
   },
+  timelineCardPressable: {
+    opacity: 1
+  },
   timelineHeader: {
     minHeight: 24,
     flexDirection: "row",
@@ -306,6 +309,126 @@ export const styles = StyleSheet.create({
     padding: spacing.sm,
     borderRadius: radii.sm,
     backgroundColor: "rgba(255, 255, 255, 0.64)"
+  },
+  toolDetailsOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(16, 24, 40, 0.42)",
+    justifyContent: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xl
+  },
+  toolDetailsPanel: {
+    maxHeight: "86%",
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    overflow: "hidden"
+  },
+  toolDetailsHeader: {
+    minHeight: 58,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.surfaceMuted,
+    paddingHorizontal: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  toolDetailsTitleWrap: {
+    flex: 1,
+    minWidth: 0
+  },
+  toolDetailsTitle: {
+    color: colors.text,
+    fontSize: 16,
+    fontWeight: fontWeights.title
+  },
+  toolDetailsSubtitle: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    marginTop: 2
+  },
+  toolDetailsClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surfaceMuted
+  },
+  toolDetailsScroll: {
+    maxHeight: "100%"
+  },
+  toolDetailsContent: {
+    padding: spacing.md,
+    gap: spacing.sm
+  },
+  toolDetailSection: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    overflow: "hidden"
+  },
+  toolDetailSectionHeader: {
+    minHeight: 42,
+    paddingHorizontal: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.surface
+  },
+  toolDetailSectionTitle: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: fontWeights.action
+  },
+  toolDetailSectionBody: {
+    padding: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.surfaceMuted
+  },
+  toolDetailRows: {
+    gap: spacing.sm
+  },
+  toolDetailCode: {
+    color: colors.code,
+    fontSize: 11,
+    fontWeight: fontWeights.body,
+    lineHeight: 16,
+    padding: spacing.sm,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceMuted
+  },
+  toolKeyValueRow: {
+    gap: spacing.xs
+  },
+  toolKey: {
+    color: colors.textSubtle,
+    fontSize: 10,
+    fontWeight: fontWeights.label,
+    textTransform: "uppercase"
+  },
+  toolValue: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    lineHeight: 17
+  },
+  toolChangeBlock: {
+    gap: spacing.xs
+  },
+  toolChangePath: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: fontWeights.action
+  },
+  toolChangeKind: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: fontWeights.body
   },
   approvalTimelineCard: {
     borderColor: "rgba(183, 110, 0, 0.24)",

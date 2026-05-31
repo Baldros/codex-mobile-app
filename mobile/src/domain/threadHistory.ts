@@ -175,7 +175,15 @@ function toolCallParts(
         title: asString(record.name) ?? asString(record.tool) ?? "Tool call",
         detail: args,
         output: toolResultsByCallId.get(id),
-        status: "done"
+        status: "done",
+        toolDetails: {
+          kind: "tool_call",
+          name: record.name,
+          tool: record.tool,
+          arguments: record.args ?? record.arguments ?? record.input,
+          output: toolResultsByCallId.get(id),
+          raw: record
+        }
       }
     ];
   });
@@ -197,7 +205,12 @@ function activityPartFromHistoryItem(
       type: "activity",
       title: asString(item.name) ?? "Tool result",
       detail: optionalText(item.content, item.output, item.result, item.text),
-      status: historyStatus(item.status)
+      status: historyStatus(item.status),
+      toolDetails: {
+        kind: "tool_result",
+        output: item.output ?? item.result ?? item.content ?? item.text,
+        raw: item
+      }
     };
   }
 
@@ -222,7 +235,17 @@ function activityPartFromHistoryItem(
       title: "Command",
       detail: commandDetail(item.command, item.cwd),
       output: optionalText(item.aggregatedOutput, item.aggregated_output, item.output, item.result),
-      status: historyStatus(item.status, item.exitCode ?? item.exit_code)
+      status: historyStatus(item.status, item.exitCode ?? item.exit_code),
+      toolDetails: {
+        kind: "command_execution",
+        command: item.command,
+        cwd: item.cwd,
+        output: item.aggregatedOutput ?? item.aggregated_output ?? item.output ?? item.result,
+        exitCode: item.exitCode ?? item.exit_code,
+        durationMs: item.durationMs ?? item.duration_ms,
+        status: item.status,
+        raw: item
+      }
     };
   }
 
@@ -234,7 +257,17 @@ function activityPartFromHistoryItem(
       title: asString(item.tool) ?? "MCP tool",
       detail: asString(item.server) ?? stringifyPayload(item.input ?? item.args),
       output: optionalText(item.output, item.result, item.error),
-      status: historyStatus(item.status, item.error ? 1 : undefined)
+      status: historyStatus(item.status, item.error ? 1 : undefined),
+      toolDetails: {
+        kind: type,
+        server: item.server,
+        tool: item.tool,
+        arguments: item.arguments ?? item.input ?? item.args,
+        result: item.result ?? item.output,
+        error: item.error,
+        status: item.status,
+        raw: item
+      }
     };
   }
 
@@ -246,7 +279,15 @@ function activityPartFromHistoryItem(
       title: "Web search",
       detail: asString(item.query) ?? optionalText(item.input),
       output: optionalText(item.output, item.result),
-      status: historyStatus(item.status)
+      status: historyStatus(item.status),
+      toolDetails: {
+        kind: "web_search",
+        query: item.query,
+        action: item.action,
+        output: item.output ?? item.result,
+        status: item.status,
+        raw: item
+      }
     };
   }
 
@@ -258,7 +299,15 @@ function activityPartFromHistoryItem(
       title: "File change",
       detail: asString(item.status) ?? stringifyPayload(item.changes),
       output: optionalText(item.output, item.result),
-      status: historyStatus(item.status)
+      status: historyStatus(item.status),
+      toolDetails: {
+        kind: "file_change",
+        changes: item.changes,
+        diff: item.diff,
+        output: item.output ?? item.result,
+        status: item.status,
+        raw: item
+      }
     };
   }
 
@@ -280,7 +329,12 @@ function activityPartFromHistoryItem(
         type: "activity",
         title: asString(item.name) ?? "Tool result",
         detail: result,
-        status: "done"
+        status: "done",
+        toolDetails: {
+          kind: "tool_result",
+          output: result,
+          raw: item
+        }
       }
     : null;
 }

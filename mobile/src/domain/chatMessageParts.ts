@@ -143,7 +143,8 @@ export function upsertActivityPart(message: ChatMessage, activity: ActivityItem)
     title: activity.title,
     detail: activity.detail,
     status: activity.status,
-    output: existing?.type === "activity" ? existing.output : undefined
+    output: existing?.type === "activity" ? existing.output : undefined,
+    toolDetails: activity.toolDetails ?? (existing?.type === "activity" ? existing.toolDetails : undefined)
   };
 
   if (existingIndex >= 0) {
@@ -173,7 +174,8 @@ export function appendActivityOutputPart(
         ...existing,
         detail: fallbackDetail ?? existing.detail,
         output: trimMiddle(nextOutput, 360),
-        status: existing.status === "done" || existing.status === "failed" ? existing.status : "running"
+        status: existing.status === "done" || existing.status === "failed" ? existing.status : "running",
+        toolDetails: mergeToolDetails(existing.toolDetails, { output: nextOutput })
       };
     }
   } else {
@@ -183,11 +185,22 @@ export function appendActivityOutputPart(
       title: "Command output",
       detail: fallbackDetail,
       output: trimMiddle(output, 360),
-      status: "running"
+      status: "running",
+      toolDetails: { output }
     });
   }
 
   return { ...message, parts };
+}
+
+function mergeToolDetails(
+  current: Record<string, unknown> | undefined,
+  patch: Record<string, unknown>
+) {
+  return {
+    ...(current ?? {}),
+    ...patch
+  };
 }
 
 export function upsertApprovalPart(message: ChatMessage, approval: PendingApproval): ChatMessage {
