@@ -102,23 +102,10 @@ config/workspaces.allowlist
 
 Um path por linha. O arquivo local e ignorado pelo Git; `config/workspaces.allowlist.example` serve de modelo.
 
-## API implementada
+## API
 
-- `GET /health`
-- `GET /v1/workspaces`
-- `GET /v1/threads`
-- `POST /v1/threads`
-- `GET /v1/threads/:threadId`
-- `POST /v1/threads/:threadId/runs/stream`
-- `POST /v1/threads/:threadId/cancel`
-- `POST /v1/approvals/:approvalId/respond`
-- `GET /v1/settings/models`
-- `GET /v1/settings/config`
-- `POST /v1/settings/config`
-- `GET /v1/settings/account`
-- `GET /v1/settings/features`
-- `GET /v1/setup/ssh/status`
+O bridge expoe a API HTTP/SSE em loopback. A referencia completa e canonica dos endpoints fica em `backend/README.md` (health/capabilities, threads, runs com SSE de stream e reanexar, workspaces, settings, apps/skills, MCP, aprovacoes e status do SSH). Comece por `GET /v1/capabilities` para descobrir o que o runtime ativo suporta.
 
 ## Estado atual
 
-Este repositorio tem a fundacao tecnica, o bridge local e o shell mobile inicial implementados. As proximas etapas principais sao robustecer estados de falha no app, evoluir o SSH tunnel manager mobile e adicionar pareamento/seguranca operacional para uso interno em rede local ou 5G.
+A fundacao tecnica, o bridge local e o app mobile estao implementados e operacionais. O app cobre selecao de workspace/modelo/conversa, chat em streaming com renderizacao Markdown, timeline de atividade e ferramentas, aprovacoes human-in-the-loop, cancelamento, mentions estruturadas (`$app`/`$skill`/`$mcp`), navegacao de recursos MCP, limites de conta e presets de modo de execucao, alem do SSH tunnel manager. As proximas etapas principais sao robustecer estados de falha no app e adicionar pareamento/seguranca operacional para uso interno em rede local ou 5G.

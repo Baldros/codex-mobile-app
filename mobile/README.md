@@ -74,12 +74,25 @@ npm test
 npm run web
 ```
 
-## MVP implementado
+## Funcionalidades
 
-- Health do Bridge.
-- Selecao de repositorio via `GET /v1/workspaces`.
-- Selecao de modelo via `GET /v1/settings/models`.
-- Selecao de conversa via `GET /v1/threads?cwd=...`.
-- Chat via `POST /v1/threads/:id/runs/stream`.
-- Eventos estruturados de atividade, ferramentas e aprovacoes.
-- Settings basico para URL do Bridge, approval policy, sandbox, network e defaults do Codex.
+- Health e capabilities do Bridge.
+- Selecao de repositorio (`GET /v1/workspaces`), com adicionar/remover da allowlist.
+- Selecao de modelo, reasoning effort e service tier (`GET /v1/settings/models`).
+- Gestao de conversas (`GET /v1/threads?cwd=...`), incluindo renomear e arquivar.
+- Chat em streaming (`POST /v1/threads/:id/runs/stream`) com renderizacao Markdown.
+- Timeline estruturada de atividade, ferramentas e aprovacoes human-in-the-loop, com cancelamento.
+- Mentions estruturadas no composer (`$app` / `$skill` / `$mcp`) e navegacao de recursos MCP.
+- Limites de conta e presets de modo de execucao (sandbox, approval policy, network).
+- Settings para URL do Bridge, build do tunnel SSH e defaults do Codex.
+
+## Estrutura
+
+- `src/screens/`: telas (`HomeScreen`, `SettingsScreen`, `ConversationsScreen`, `RepositoriesScreen`).
+  - `src/screens/home/` e `src/screens/settings/`: subcomponentes e `styles.ts` de cada tela grande.
+- `src/components/`: componentes reutilizaveis (`IconAction`, `MarkdownText`, `Screen`, ...).
+- `src/state/BridgeProvider.tsx`: estado central e cliente do bridge (contexto React, hook `useBridge`).
+- `src/domain/`: tipos e logica de dominio (tipos do bridge, mentions, partes de mensagem, parsing de historico, opcoes do composer).
+- `src/api/`: cliente HTTP/SSE. `src/transport/`: SSH tunnel manager.
+- `src/config/`, `src/storage/`, `src/theme/`, `src/utils/`: build config, preferencias, tema e utilidades.
+- `modules/codex-ssh-tunnel/`: modulo nativo Android do tunnel (exige dev build/APK).
