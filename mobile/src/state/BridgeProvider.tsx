@@ -1005,6 +1005,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       const threadId = asString(data.thread_id) ?? activeRunThreadId.current;
       activeRunId.current = runId;
       activeRunThreadId.current = threadId;
+      attachedRunId.current = runId;
       if (runId && threadId) {
         setActiveRuns((current) => [
           {
