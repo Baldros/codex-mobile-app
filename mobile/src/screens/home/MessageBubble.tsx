@@ -1,5 +1,6 @@
 import { AlertCircle, Check, CheckCircle2, Clock3, ShieldCheck, Terminal, X } from "lucide-react-native";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import { ActivityIndicator, PanResponder, Pressable, Text, View } from "react-native";
 
 import { MarkdownText } from "../../components/MarkdownText";
 import type { ChatMessage, ChatMessagePart, PendingApproval } from "../../domain/bridge";
@@ -27,7 +28,12 @@ export function MessageBubble({
           {isUser ? <DeliveryStatusIcon status={message.deliveryStatus} /> : null}
         </View>
         {isUser ? (
-          <MarkdownText text={message.text} variant="inverted" />
+          <>
+            <MarkdownText text={message.text} variant="inverted" />
+            {message.deliveryStatus === "failed" ? (
+              <UserMessageErrorDrawer error={message.deliveryError ?? "Message failed."} />
+            ) : null}
+          </>
         ) : parts.length > 0 ? (
           <View style={styles.messageParts}>
             {parts.map((part, index) => (
@@ -46,6 +52,47 @@ export function MessageBubble({
           </View>
         )}
       </View>
+    </View>
+  );
+}
+
+function UserMessageErrorDrawer({ error }: { error: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx < -12) {
+            setExpanded(true);
+          } else if (gesture.dx > 12) {
+            setExpanded(false);
+          }
+        }
+      }),
+    []
+  );
+
+  return (
+    <View style={styles.messageErrorDrawer}>
+      <Pressable
+        {...panResponder.panHandlers}
+        accessibilityLabel={expanded ? "Hide send error" : "Show send error"}
+        accessibilityRole="button"
+        onPress={() => setExpanded((current) => !current)}
+        style={[styles.messageErrorTab, expanded && styles.messageErrorTabOpen]}
+      >
+        <AlertCircle size={15} color={colors.danger} strokeWidth={2.6} />
+      </Pressable>
+      {expanded ? (
+        <View style={styles.messageErrorPanel}>
+          <Text style={styles.messageErrorTitle}>Send failed</Text>
+          <Text numberOfLines={6} selectable style={styles.messageErrorText}>
+            {error}
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 }

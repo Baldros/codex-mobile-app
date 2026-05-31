@@ -165,6 +165,50 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   },
+  messageErrorDrawer: {
+    alignSelf: "stretch",
+    marginTop: spacing.sm
+  },
+  messageErrorTab: {
+    width: 30,
+    height: 28,
+    marginLeft: -spacing.md - 1,
+    marginBottom: -1,
+    borderTopLeftRadius: radii.sm,
+    borderBottomLeftRadius: radii.sm,
+    borderTopRightRadius: 0,
+    borderBottomRightRadius: 0,
+    borderWidth: 1,
+    borderRightWidth: 0,
+    borderColor: "rgba(180, 35, 24, 0.30)",
+    backgroundColor: colors.dangerSoft,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  messageErrorTabOpen: {
+    backgroundColor: "#FFFFFF"
+  },
+  messageErrorPanel: {
+    borderRadius: radii.sm,
+    borderTopLeftRadius: 0,
+    borderWidth: 1,
+    borderColor: "rgba(180, 35, 24, 0.30)",
+    backgroundColor: "rgba(255, 255, 255, 0.96)",
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  messageErrorTitle: {
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: fontWeights.action
+  },
+  messageErrorText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: fontWeights.body,
+    lineHeight: 17,
+    marginTop: spacing.xs
+  },
   messageText: {
     color: colors.text,
     fontSize: 15,
