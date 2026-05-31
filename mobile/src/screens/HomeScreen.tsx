@@ -52,7 +52,11 @@ export function HomeScreen() {
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
     [bridge.models, bridge.selectedModelId]
   );
-  const canSend = draft.trim().length > 0 && !bridge.isRunning && Boolean(bridge.selectedWorkspace);
+  const canSend =
+    draft.trim().length > 0 &&
+    !bridge.isRunning &&
+    !bridge.isComposerLocked &&
+    Boolean(bridge.selectedWorkspace);
   const mentionTrigger = useMemo(() => activeMentionTrigger(draft), [draft]);
   const mentionItems = useMemo(
     () =>

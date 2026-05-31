@@ -43,6 +43,7 @@ import type {
   WorkspaceEntry
 } from "../domain/bridge";
 import {
+  activityPartId,
   appendActivityOutputPart,
   appendTextPart,
   answerApprovalPart,
@@ -95,6 +96,7 @@ type BridgeContextValue = {
   isRefreshingMcp: boolean;
   isLoadingThreadContent: boolean;
   isRunning: boolean;
+  isComposerLocked: boolean;
   error: string | null;
   accountError: string | null;
   mentionError: string | null;
@@ -165,6 +167,8 @@ const DEFAULT_CAPABILITIES: BridgeCapabilities = {
   }
 };
 
+const PROCESSING_RESULTS_ACTIVITY_ID = "processing_results";
+
 export function BridgeProvider({ children }: PropsWithChildren) {
   const [preferences, setPreferences] = useState<BridgePreferences>(DEFAULT_PREFERENCES);
   const [health, setHealth] = useState<BridgeHealth | null>(null);
@@ -192,6 +196,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [isRefreshingMcp, setIsRefreshingMcp] = useState(false);
   const [isLoadingThreadContent, setIsLoadingThreadContent] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [isComposerLocked, setIsComposerLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [mentionError, setMentionError] = useState<string | null>(null);
@@ -266,6 +271,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     activeAbortController.current = null;
     activeUserMessageId.current = null;
     attachedRunId.current = null;
+    setIsComposerLocked(false);
   }, []);
 
   const loadThreadContent = useCallback(
@@ -910,7 +916,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const sendMessage = useCallback(
     async (message: string, inputItems: RunInputItem[] = []) => {
       const cleanMessage = message.trim();
-      if (!cleanMessage || isRunning || !selectedWorkspace) {
+      if (!cleanMessage || isRunning || isComposerLocked || !selectedWorkspace) {
         return;
       }
 
@@ -934,6 +940,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
 
       setMessages((current) => [...current, userMessage]);
       setIsRunning(true);
+      setIsComposerLocked(true);
       activeRunId.current = null;
       activeRunThreadId.current = selectedThreadRef.current?.id ?? null;
       activeUserMessageId.current = userMessage.id;
@@ -1020,6 +1027,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       } finally {
         const detached = detachedAbortControllers.current.delete(abortController);
         if (!detached) {
+          setIsComposerLocked(false);
           setIsRunning(false);
           activeAbortController.current = null;
           activeRunId.current = null;
@@ -1032,6 +1040,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     [
       client,
       createPersistedThread,
+      isComposerLocked,
       isRunning,
       loadThreadsForWorkspace,
       preferences.approvalPolicy,
@@ -1081,6 +1090,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     if (event.event === "agent_message_delta") {
       const text = asString(data.text) ?? "";
       if (text.length > 0) {
+        clearAssistantProcessing(assistantMessageId);
         appendAssistantText(assistantMessageId, text, asString(data.item_id));
       }
       return;
@@ -1088,11 +1098,13 @@ export function BridgeProvider({ children }: PropsWithChildren) {
 
     if (event.event === "agent_message") {
       const text = asString(data.text);
+      clearAssistantProcessing(assistantMessageId);
       completeAssistantText(assistantMessageId, text, asString(data.item_id));
       return;
     }
 
     if (event.event === "tool_start") {
+      clearAssistantProcessing(assistantMessageId);
       const activity = {
         id: asString(data.item_id) ?? createId("tool"),
         title: toolTitle(data),
@@ -1113,6 +1125,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       } as const;
       addOrUpdateActivity(activity);
       addOrUpdateAssistantActivity(assistantMessageId, activity);
+      addAssistantProcessing(assistantMessageId);
       return;
     }
 
@@ -1194,6 +1207,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       if (userMessageId) {
         setMessages((current) => setMessageDeliveryStatus(current, userMessageId, "failed", message));
       }
+      clearAssistantProcessing(assistantMessageId);
       markAssistantFailed(assistantMessageId, message);
       return;
     }
@@ -1211,6 +1225,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
           )
         );
       }
+      clearAssistantProcessing(assistantMessageId);
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId
@@ -1255,6 +1270,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     activeRunThreadId.current = run.thread_id;
     attachedRunId.current = run.run_id;
     setIsRunning(true);
+    setIsComposerLocked(true);
 
     void client
       .streamRunEvents(
@@ -1272,6 +1288,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       .finally(() => {
         const detached = detachedAbortControllers.current.delete(abortController);
         if (!detached && activeRunId.current === run.run_id) {
+          setIsComposerLocked(false);
           activeAbortController.current = null;
           activeRunId.current = null;
           activeRunThreadId.current = null;
@@ -1288,6 +1305,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       if (attachedRunId.current === run.run_id) {
         attachedRunId.current = null;
       }
+      setIsComposerLocked(false);
     };
   }, [activeRuns, client, handleRunEvent, selectedThread?.id]);
 
@@ -1318,6 +1336,29 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setMessages((current) =>
       current.map((item) =>
         item.id === messageId ? upsertActivityPart(item, activity) : item
+      )
+    );
+  }, []);
+
+  const addAssistantProcessing = useCallback((messageId: string) => {
+    setMessages((current) =>
+      current.map((item) =>
+        item.id === messageId
+          ? upsertActivityPart(item, {
+              id: PROCESSING_RESULTS_ACTIVITY_ID,
+              title: "Processing results",
+              detail: "Preparing response",
+              status: "running"
+            })
+          : item
+      )
+    );
+  }, []);
+
+  const clearAssistantProcessing = useCallback((messageId: string) => {
+    setMessages((current) =>
+      current.map((item) =>
+        item.id === messageId ? removeMessagePart(item, activityPartId(PROCESSING_RESULTS_ACTIVITY_ID)) : item
       )
     );
   }, []);
@@ -1381,6 +1422,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     if (runId) {
       setActiveRuns((current) => current.filter((run) => run.run_id !== runId));
     }
+    setIsComposerLocked(false);
     setIsRunning(false);
     activeRunId.current = null;
     activeRunThreadId.current = null;
@@ -1467,6 +1509,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       isRefreshingMcp,
       isLoadingThreadContent,
       isRunning,
+      isComposerLocked,
       error,
       accountError,
       mentionError,
@@ -1517,6 +1560,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       health,
       isBooting,
       isLoadingThreadContent,
+      isComposerLocked,
       isRefreshingAccount,
       isRefreshingMentions,
       isRefreshingMcp,
@@ -1636,6 +1680,17 @@ function withMessageDeliveryStatus(
     delete next.deliveryError;
   }
   return next;
+}
+
+function removeMessagePart(message: ChatMessage, partId: string): ChatMessage {
+  const parts = message.parts;
+  if (!parts?.some((part) => part.id === partId)) {
+    return message;
+  }
+  return {
+    ...message,
+    parts: parts.filter((part) => part.id !== partId)
+  };
 }
 
 function readConfigString(config: CodexConfigResponse | null, key: string) {
