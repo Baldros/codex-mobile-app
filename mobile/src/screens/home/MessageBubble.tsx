@@ -1,4 +1,4 @@
-import { Check, ShieldCheck, Terminal, X } from "lucide-react-native";
+import { AlertCircle, Check, CheckCircle2, Clock3, ShieldCheck, Terminal, X } from "lucide-react-native";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 
 import { MarkdownText } from "../../components/MarkdownText";
@@ -19,10 +19,13 @@ export function MessageBubble({
   return (
     <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
       <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.assistantBubble]}>
-        <Text style={[styles.messageRole, isUser && styles.userRole]}>
-          {isUser ? "You" : "Codex"}
-          {message.pending ? " ." : ""}
-        </Text>
+        <View style={styles.messageHeader}>
+          <Text style={[styles.messageRole, isUser && styles.userRole]}>
+            {isUser ? "You" : "Codex"}
+            {message.pending ? " ." : ""}
+          </Text>
+          {isUser ? <DeliveryStatusIcon status={message.deliveryStatus} /> : null}
+        </View>
         {isUser ? (
           <MarkdownText text={message.text} variant="inverted" />
         ) : parts.length > 0 ? (
@@ -43,6 +46,25 @@ export function MessageBubble({
           </View>
         )}
       </View>
+    </View>
+  );
+}
+
+function DeliveryStatusIcon({
+  status
+}: {
+  status: ChatMessage["deliveryStatus"];
+}) {
+  if (!status) {
+    return null;
+  }
+
+  const tone = deliveryTone(status);
+  const Icon = status === "sending" ? Clock3 : status === "sent" ? CheckCircle2 : AlertCircle;
+
+  return (
+    <View accessibilityLabel={tone.label} accessible style={styles.deliveryBadge}>
+      <Icon size={13} color={tone.color} strokeWidth={2.6} />
     </View>
   );
 }
@@ -196,6 +218,25 @@ function messageParts(message: ChatMessage): ChatMessagePart[] {
     ];
   }
   return [];
+}
+
+function deliveryTone(status: NonNullable<ChatMessage["deliveryStatus"]>) {
+  if (status === "sending") {
+    return {
+      color: colors.warning,
+      label: "Message sending"
+    };
+  }
+  if (status === "failed") {
+    return {
+      color: colors.danger,
+      label: "Message failed"
+    };
+  }
+  return {
+    color: colors.success,
+    label: "Message sent"
+  };
 }
 
 function activityTone(status: Extract<ChatMessagePart, { type: "activity" }>["status"]) {

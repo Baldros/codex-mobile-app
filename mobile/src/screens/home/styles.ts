@@ -140,14 +140,30 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderColor: colors.border
   },
+  messageHeader: {
+    minHeight: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+    marginBottom: 4
+  },
   messageRole: {
     color: colors.textMuted,
     fontSize: 11,
     fontWeight: fontWeights.action,
-    marginBottom: 4
+    marginBottom: 0
   },
   userRole: {
     color: "#DCEFF3"
+  },
+  deliveryBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "rgba(255, 255, 255, 0.92)",
+    alignItems: "center",
+    justifyContent: "center"
   },
   messageText: {
     color: colors.text,

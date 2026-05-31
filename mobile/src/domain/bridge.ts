@@ -311,6 +311,8 @@ export type ChatMessage = {
   text: string;
   pending?: boolean;
   parts?: ChatMessagePart[];
+  deliveryStatus?: "sending" | "sent" | "failed";
+  deliveryError?: string;
 };
 
 export type ActivityItem = {

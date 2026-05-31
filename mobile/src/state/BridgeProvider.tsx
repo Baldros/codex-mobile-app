@@ -203,6 +203,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const activeAbortController = useRef<AbortController | null>(null);
   const activeRunId = useRef<string | null>(null);
   const activeRunThreadId = useRef<string | null>(null);
+  const activeUserMessageId = useRef<string | null>(null);
   const attachedRunId = useRef<string | null>(null);
   const detachedAbortControllers = useRef(new Set<AbortController>());
   const buildConfig = useMemo(() => getCodexMobileBuildConfig(), []);
@@ -263,6 +264,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     detachedAbortControllers.current.add(controller);
     controller.abort();
     activeAbortController.current = null;
+    activeUserMessageId.current = null;
     attachedRunId.current = null;
   }, []);
 
@@ -914,15 +916,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
 
       setError(null);
       setPendingApprovals([]);
-      const thread = selectedThreadRef.current ?? (await createPersistedThread());
-      if (!thread) {
-        return;
-      }
 
       const userMessage: ChatMessage = {
         id: createId("user"),
         role: "user",
-        text: cleanMessage
+        text: cleanMessage,
+        deliveryStatus: "sending"
       };
       const assistantMessageId = createId("assistant");
       const assistantMessage: ChatMessage = {
@@ -933,14 +932,41 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         pending: true
       };
 
-      setMessages((current) => [...current, userMessage, assistantMessage]);
+      setMessages((current) => [...current, userMessage]);
       setIsRunning(true);
       activeRunId.current = null;
-      activeRunThreadId.current = thread.id;
+      activeRunThreadId.current = selectedThreadRef.current?.id ?? null;
+      activeUserMessageId.current = userMessage.id;
       const abortController = new AbortController();
       activeAbortController.current = abortController;
+      let runFailed = false;
 
       try {
+        const thread = selectedThreadRef.current ?? (await createPersistedThread());
+        if (!thread) {
+          if (!abortController.signal.aborted) {
+            setMessages((current) =>
+              setMessageDeliveryStatus(
+                current,
+                userMessage.id,
+                "failed",
+                "Could not create conversation."
+              )
+            );
+          }
+          return;
+        }
+        if (abortController.signal.aborted) {
+          return;
+        }
+
+        activeRunThreadId.current = thread.id;
+        setMessages((current) =>
+          current.some((item) => item.id === assistantMessageId)
+            ? current
+            : [...current, assistantMessage]
+        );
+
         const runBody = {
           message: cleanMessage,
           cwd: selectedWorkspace.path,
@@ -962,14 +988,34 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         await client.streamRun(
           thread.id,
           requestBody,
-          (event) => handleRunEvent(event, assistantMessageId),
+          (event) => {
+            if (event.event === "error") {
+              runFailed = true;
+            }
+            if (event.event === "done" && isFailedStatus((event.data as Record<string, unknown>).status)) {
+              runFailed = true;
+            }
+            handleRunEvent(event, assistantMessageId, userMessage.id);
+          },
           abortController.signal
         );
         await loadThreadsForWorkspace(selectedWorkspace.path, thread.id);
+        setMessages((current) =>
+          setLatestUserMessageDeliveryStatus(
+            current,
+            cleanMessage,
+            runFailed ? "failed" : "sent",
+            runFailed ? "Run failed." : undefined
+          )
+        );
       } catch (caught) {
         if (!abortController.signal.aborted) {
-          setError(errorMessage(caught));
-          markAssistantFailed(assistantMessageId, errorMessage(caught));
+          const message = errorMessage(caught);
+          setError(message);
+          setMessages((current) =>
+            setMessageDeliveryStatus(current, userMessage.id, "failed", message)
+          );
+          markAssistantFailed(assistantMessageId, message);
         }
       } finally {
         const detached = detachedAbortControllers.current.delete(abortController);
@@ -978,6 +1024,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
           activeAbortController.current = null;
           activeRunId.current = null;
           activeRunThreadId.current = null;
+          activeUserMessageId.current = null;
           attachedRunId.current = null;
         }
       }
@@ -997,7 +1044,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     ]
   );
 
-  const handleRunEvent = useCallback((event: BridgeSseEvent, assistantMessageId: string) => {
+  const handleRunEvent = useCallback((event: BridgeSseEvent, assistantMessageId: string, userMessageId?: string) => {
     const data = event.data as Record<string, unknown>;
 
     if (event.event === "run_started") {
@@ -1006,6 +1053,9 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       activeRunId.current = runId;
       activeRunThreadId.current = threadId;
       attachedRunId.current = runId;
+      if (userMessageId) {
+        setMessages((current) => setMessageDeliveryStatus(current, userMessageId, "sent"));
+      }
       if (runId && threadId) {
         setActiveRuns((current) => [
           {
@@ -1139,13 +1189,28 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     }
 
     if (event.event === "error") {
-      setError(asString(data.message) ?? "Stream error.");
-      markAssistantFailed(assistantMessageId, asString(data.message) ?? "Stream error.");
+      const message = asString(data.message) ?? "Stream error.";
+      setError(message);
+      if (userMessageId) {
+        setMessages((current) => setMessageDeliveryStatus(current, userMessageId, "failed", message));
+      }
+      markAssistantFailed(assistantMessageId, message);
       return;
     }
 
     if (event.event === "done") {
       const runId = asString(data.run_id) ?? activeRunId.current;
+      const status = asString(data.status);
+      if (userMessageId) {
+        setMessages((current) =>
+          setMessageDeliveryStatus(
+            current,
+            userMessageId,
+            isFailedStatus(status) ? "failed" : "sent",
+            isFailedStatus(status) ? status ?? "Run failed." : undefined
+          )
+        );
+      }
       setMessages((current) =>
         current.map((item) =>
           item.id === assistantMessageId
@@ -1305,6 +1370,11 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     const runId = selectedRun?.run_id ?? activeRunId.current;
 
     activeAbortController.current?.abort();
+    if (activeUserMessageId.current) {
+      setMessages((current) =>
+        setMessageDeliveryStatus(current, activeUserMessageId.current, "failed", "Cancelled.")
+      );
+    }
     if (threadId && runId) {
       await client.cancelRun(threadId, runId).catch(() => null);
     }
@@ -1314,6 +1384,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setIsRunning(false);
     activeRunId.current = null;
     activeRunThreadId.current = null;
+    activeUserMessageId.current = null;
     attachedRunId.current = null;
   }, [activeRuns, client, selectedThread?.id]);
 
@@ -1496,6 +1567,75 @@ export function useBridge() {
     throw new Error("useBridge must be used within BridgeProvider.");
   }
   return context;
+}
+
+type DeliveryStatus = NonNullable<ChatMessage["deliveryStatus"]>;
+
+function setMessageDeliveryStatus(
+  messages: ChatMessage[],
+  messageId: string | null | undefined,
+  deliveryStatus: DeliveryStatus,
+  deliveryError?: string
+) {
+  if (!messageId) {
+    return messages;
+  }
+
+  let updated = false;
+  const next = messages.map((message) => {
+    if (message.id !== messageId) {
+      return message;
+    }
+    updated = true;
+    return withMessageDeliveryStatus(message, deliveryStatus, deliveryError);
+  });
+  return updated ? next : messages;
+}
+
+function setLatestUserMessageDeliveryStatus(
+  messages: ChatMessage[],
+  text: string,
+  deliveryStatus: DeliveryStatus,
+  deliveryError?: string
+) {
+  const cleanText = text.trim();
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "user" || message.text.trim() !== cleanText) {
+      continue;
+    }
+
+    const updated = withMessageDeliveryStatus(message, deliveryStatus, deliveryError);
+    if (updated === message) {
+      return messages;
+    }
+
+    const next = [...messages];
+    next[index] = updated;
+    return next;
+  }
+  return messages;
+}
+
+function withMessageDeliveryStatus(
+  message: ChatMessage,
+  deliveryStatus: DeliveryStatus,
+  deliveryError?: string
+): ChatMessage {
+  const nextError = deliveryStatus === "failed" ? deliveryError : undefined;
+  if (message.deliveryStatus === deliveryStatus && message.deliveryError === nextError) {
+    return message;
+  }
+  const next: ChatMessage = {
+    ...message,
+    deliveryStatus
+  };
+  if (nextError) {
+    next.deliveryError = nextError;
+  } else {
+    delete next.deliveryError;
+  }
+  return next;
 }
 
 function readConfigString(config: CodexConfigResponse | null, key: string) {
