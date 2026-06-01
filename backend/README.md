@@ -83,6 +83,11 @@ Workspaces
 - `POST /v1/workspaces/remove`
 - `POST /v1/workspaces/restore`
 
+Filesystem picker
+
+- `GET /v1/filesystem/roots`
+- `GET /v1/filesystem/children?path=...`
+
 Settings
 
 - `GET /v1/settings/models`

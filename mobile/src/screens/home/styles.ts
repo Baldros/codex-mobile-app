@@ -52,7 +52,7 @@ export const styles = StyleSheet.create({
     marginHorizontal: spacing.lg,
     marginTop: spacing.xs,
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "stretch",
     gap: spacing.sm
   },
   threadButton: {
@@ -81,6 +81,10 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: fontWeights.body,
     marginTop: 2
+  },
+  threadActions: {
+    justifyContent: "center",
+    gap: spacing.sm
   },
   approvalActions: {
     flexDirection: "row",

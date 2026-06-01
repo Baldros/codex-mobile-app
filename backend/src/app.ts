@@ -5,6 +5,7 @@ import { AppServerClient } from "./appServer/AppServerClient.js";
 import type { BridgeThreadQuery, BridgeThreadService } from "./appServer/types.js";
 import { getBridgeConfig, type BridgeConfig } from "./config.js";
 import { AppError, getErrorPayload } from "./errors.js";
+import { FileSystemService } from "./filesystem/FileSystemService.js";
 import { createRuntime } from "./runtime/createRuntime.js";
 import type { CodexRuntimeHealth } from "./runtime/types.js";
 import { RunRegistry } from "./runs/RunRegistry.js";
@@ -29,6 +30,7 @@ export type AppDependencies = {
   threadService?: BridgeThreadService;
   runRegistry?: RunRegistry;
   workspaceService?: WorkspaceService;
+  fileSystemService?: FileSystemService;
   appServerClient?: AppServerClient;
 };
 
@@ -39,12 +41,13 @@ export function createApp(deps: AppDependencies = {}) {
     deps.threadService ??
     createDefaultThreadService(config, workspaceService, deps.appServerClient);
   const runRegistry = deps.runRegistry ?? new RunRegistry(threadService);
+  const fileSystemService = deps.fileSystemService ?? new FileSystemService();
 
   return async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     applyCorsHeaders(res);
 
     try {
-      await routeRequest(req, res, config, threadService, runRegistry, workspaceService);
+      await routeRequest(req, res, config, threadService, runRegistry, workspaceService, fileSystemService);
     } catch (error) {
       sendError(res, error);
     }
@@ -61,7 +64,8 @@ async function routeRequest(
   config: BridgeConfig,
   threadService: BridgeThreadService,
   runRegistry: RunRegistry,
-  workspaceService: WorkspaceService
+  workspaceService: WorkspaceService,
+  fileSystemService: FileSystemService
 ) {
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -205,6 +209,16 @@ async function routeRequest(
   if (method === "POST" && pathname === "/v1/workspaces/restore") {
     const body = WorkspacePathBodySchema.parse(await readJson(req));
     sendJson(res, 200, workspaceService.restoreToFileAllowlist(body.path));
+    return;
+  }
+
+  if (method === "GET" && pathname === "/v1/filesystem/roots") {
+    sendJson(res, 200, fileSystemService.listRoots());
+    return;
+  }
+
+  if (method === "GET" && pathname === "/v1/filesystem/children") {
+    sendJson(res, 200, fileSystemService.listChildren(url.searchParams.get("path")));
     return;
   }
 

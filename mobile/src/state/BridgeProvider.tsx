@@ -32,6 +32,8 @@ import type {
   CodexConfigResponse,
   CodexModel,
   CodexSkill,
+  DirectoryChildrenResponse,
+  DirectoryRootsResponse,
   McpResourceReadResponse,
   McpServerStatus,
   PendingApproval,
@@ -129,6 +131,8 @@ type BridgeContextValue = {
   reloadMcpServers: () => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
   refreshThreads: () => Promise<void>;
+  listFilesystemRoots: () => Promise<DirectoryRootsResponse>;
+  listDirectoryChildren: (path: string) => Promise<DirectoryChildrenResponse>;
   selectWorkspace: (workspace: WorkspaceEntry) => Promise<void>;
   selectThread: (thread: BridgeThread) => Promise<void>;
   renameThread: (thread: BridgeThread, title: string) => Promise<BridgeThread | null>;
@@ -674,6 +678,13 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       setIsRefreshing(false);
     }
   }, [client, loadThreadsForWorkspace, selectedThread?.id, selectedWorkspace]);
+
+  const listFilesystemRoots = useCallback(() => client.listFilesystemRoots(), [client]);
+
+  const listDirectoryChildren = useCallback(
+    (path: string) => client.listDirectoryChildren(path),
+    [client]
+  );
 
   const selectWorkspace = useCallback(
     async (workspace: WorkspaceEntry) => {
@@ -1596,6 +1607,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       reloadMcpServers,
       refreshWorkspaces,
       refreshThreads,
+      listFilesystemRoots,
+      listDirectoryChildren,
       selectWorkspace,
       selectThread,
       renameThread,
@@ -1633,6 +1646,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       isRefreshingMentions,
       isRefreshingMcp,
       isRefreshing,
+      listDirectoryChildren,
+      listFilesystemRoots,
       isRunning,
       mentionError,
       mcpError,

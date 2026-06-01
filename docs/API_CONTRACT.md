@@ -220,6 +220,43 @@ inclui o novo path. A resposta segue o formato:
 `POST /v1/workspaces/remove` remove uma entrada do arquivo de allowlist.
 `POST /v1/workspaces/restore` recoloca uma entrada removida.
 
+## Filesystem Picker
+
+O mobile usa essas rotas para navegar pastas no desktop sem acessar arquivos.
+
+```http
+GET /v1/filesystem/roots
+```
+
+Retorna os discos locais no Windows, ou a raiz local em outros sistemas:
+
+```json
+{
+  "data": [
+    { "name": "E:\\", "path": "E:\\", "is_git_repo": false }
+  ]
+}
+```
+
+```http
+GET /v1/filesystem/children?path=E%3A%5CProjetos
+```
+
+Retorna somente diretorios filhos. O app chama essa mesma rota a cada nivel de
+navegacao e usa `parent` para voltar:
+
+```json
+{
+  "path": "E:\\Projetos",
+  "name": "Projetos",
+  "parent": "E:\\",
+  "children": [
+    { "name": "codex-mobile-app", "path": "E:\\Projetos\\codex-mobile-app", "is_git_repo": true }
+  ],
+  "truncated": false
+}
+```
+
 ## Approvals
 
 Quando o Codex pedir decisao humana, o stream SSE envia:

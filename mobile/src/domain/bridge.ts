@@ -17,6 +17,24 @@ export type WorkspaceEntry = {
   source: "file" | "env" | "fallback" | string;
 };
 
+export type DirectoryEntry = {
+  name: string;
+  path: string;
+  is_git_repo: boolean;
+};
+
+export type DirectoryRootsResponse = {
+  data: DirectoryEntry[];
+};
+
+export type DirectoryChildrenResponse = {
+  path: string;
+  name: string;
+  parent: string | null;
+  children: DirectoryEntry[];
+  truncated: boolean;
+};
+
 export type BridgeCapabilities = {
   threads: {
     rename: boolean;

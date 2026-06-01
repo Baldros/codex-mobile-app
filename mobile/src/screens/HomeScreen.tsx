@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import {
+  FolderPlus,
   FolderGit2,
   ListTree,
   MessageSquarePlus,
@@ -33,6 +34,7 @@ import { colors, spacing } from "../theme/colors";
 import { compactPath } from "../utils/format";
 import { ComposerMenu } from "./home/ComposerMenu";
 import { EmptyChat } from "./home/EmptyChat";
+import { FolderPickerModal } from "./home/FolderPickerModal";
 import { LimitsModal } from "./home/LimitsModal";
 import { MentionPalette } from "./home/MentionPalette";
 import { MessageBubble } from "./home/MessageBubble";
@@ -46,6 +48,7 @@ export function HomeScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [selectedMentions, setSelectedMentions] = useState<ComposerMention[]>([]);
   const [limitsVisible, setLimitsVisible] = useState(false);
+  const [folderPickerVisible, setFolderPickerVisible] = useState(false);
   const messageListRef = useRef<FlatList<ChatMessage> | null>(null);
   const mentionLoadRequested = useRef(false);
   const selectedModel = useMemo(
@@ -202,6 +205,7 @@ export function HomeScreen() {
         </View>
 
         <LimitsModal visible={limitsVisible} onClose={() => setLimitsVisible(false)} />
+        <FolderPickerModal visible={folderPickerVisible} onClose={() => setFolderPickerVisible(false)} />
 
         {bridge.error ? (
           <View style={styles.errorBand}>
@@ -223,7 +227,14 @@ export function HomeScreen() {
               </Text>
             </View>
           </Pressable>
-          <IconAction icon={MessageSquarePlus} label="New conversation" onPress={() => void bridge.createNewThread()} />
+          <View style={styles.threadActions}>
+            <IconAction icon={MessageSquarePlus} label="New conversation" onPress={() => void bridge.createNewThread()} />
+            <IconAction
+              icon={FolderPlus}
+              label="Add folder"
+              onPress={() => setFolderPickerVisible(true)}
+            />
+          </View>
         </View>
 
         <FlatList

@@ -77,7 +77,7 @@ npm run web
 ## Funcionalidades
 
 - Health e capabilities do Bridge.
-- Selecao de repositorio (`GET /v1/workspaces`), com adicionar/remover da allowlist (`POST /v1/workspaces/add|remove|restore`).
+- Selecao de repositorio (`GET /v1/workspaces`), com navegador de pastas (`GET /v1/filesystem/roots|children`) e adicionar/remover da allowlist (`POST /v1/workspaces/add|remove|restore`).
 - Selecao de modelo, reasoning effort e service tier (`GET /v1/settings/models`).
 - Gestao de conversas (`GET /v1/threads?cwd=...`), incluindo renomear e arquivar.
 - Chat em streaming (`POST /v1/threads/:id/runs/stream`) com renderizacao Markdown.

@@ -10,6 +10,8 @@ import type {
   CodexConfigResponse,
   CodexModel,
   CodexSkillsResponse,
+  DirectoryChildrenResponse,
+  DirectoryRootsResponse,
   McpResourceReadResponse,
   McpServerStatusResponse,
   PendingApproval,
@@ -74,6 +76,16 @@ export class BridgeClient {
       method: "POST",
       body: JSON.stringify({ path })
     });
+  }
+
+  async listFilesystemRoots() {
+    return this.requestJson<DirectoryRootsResponse>("/v1/filesystem/roots");
+  }
+
+  async listDirectoryChildren(path: string) {
+    const query = new URLSearchParams();
+    query.set("path", path);
+    return this.requestJson<DirectoryChildrenResponse>(`/v1/filesystem/children?${query.toString()}`);
   }
 
   async listThreads(params: ListThreadsParams = {}) {

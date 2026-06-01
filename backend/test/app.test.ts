@@ -194,6 +194,32 @@ describe("Codex bridge HTTP API", () => {
     });
   });
 
+  it("exposes filesystem roots and directory children for folder picking", async () => {
+    await close(server);
+    const fileSystemService = {
+      listRoots: vi.fn(() => ({ data: [{ name: "E:\\", path: "E:\\", is_git_repo: false }] })),
+      listChildren: vi.fn((candidate: string | null) => ({
+        path: candidate,
+        parent: "E:\\",
+        children: [{ name: "repo", path: "E:\\repo", is_git_repo: true }],
+        truncated: false
+      }))
+    };
+    server = createServer(createApp({ config: testConfig(), fileSystemService: fileSystemService as never }));
+    baseUrl = await listen(server);
+
+    const rootsResponse = await fetch(`${baseUrl}/v1/filesystem/roots`);
+    const roots = (await rootsResponse.json()) as { data: Array<{ path: string }> };
+    expect(rootsResponse.status).toBe(200);
+    expect(roots.data[0]?.path).toBe("E:\\");
+
+    const childrenResponse = await fetch(`${baseUrl}/v1/filesystem/children?path=${encodeURIComponent("E:\\")}`);
+    const children = (await childrenResponse.json()) as { children: Array<{ name: string }> };
+    expect(childrenResponse.status).toBe(200);
+    expect(children.children[0]?.name).toBe("repo");
+    expect(fileSystemService.listChildren).toHaveBeenCalledWith("E:\\");
+  });
+
   it("exposes MCP status, reload, and resource reads through the bridge API", async () => {
     await close(server);
     const mcpService = {
