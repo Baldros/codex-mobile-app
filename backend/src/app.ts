@@ -196,6 +196,12 @@ async function routeRequest(
     return;
   }
 
+  if (method === "POST" && pathname === "/v1/workspaces/add") {
+    const body = WorkspacePathBodySchema.parse(await readJson(req));
+    sendJson(res, 200, workspaceService.addToFileAllowlist(body.path));
+    return;
+  }
+
   if (method === "POST" && pathname === "/v1/workspaces/restore") {
     const body = WorkspacePathBodySchema.parse(await readJson(req));
     sendJson(res, 200, workspaceService.restoreToFileAllowlist(body.path));

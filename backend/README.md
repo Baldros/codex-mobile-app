@@ -48,7 +48,7 @@ O Bridge le workspaces permitidos de:
 E:\codex-mobile-app\config\workspaces.allowlist
 ```
 
-Um path por linha. Linhas vazias e linhas com `#` sao ignoradas. O arquivo local fica fora do Git; use `config/workspaces.allowlist.example` como modelo.
+Um path por linha. Linhas vazias e linhas com `#` sao ignoradas. O arquivo local fica fora do Git; use `config/workspaces.allowlist.example` como modelo. A rota `POST /v1/workspaces/add` permite incluir um diretorio existente sem rebuild do app mobile.
 
 ## API
 
@@ -79,6 +79,7 @@ Runs
 Workspaces
 
 - `GET /v1/workspaces`
+- `POST /v1/workspaces/add`
 - `POST /v1/workspaces/remove`
 - `POST /v1/workspaces/restore`
 

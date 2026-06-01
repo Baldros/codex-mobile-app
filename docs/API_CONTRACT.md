@@ -196,6 +196,30 @@ Retorna a allowlist de repositorios/workspaces disponiveis para o app:
 
 O arquivo usa um path por linha. Linhas vazias e linhas iniciadas por `#` sao ignoradas.
 
+```http
+POST /v1/workspaces/add
+Content-Type: application/json
+
+{
+  "path": "E:\\outro-repo"
+}
+```
+
+Adiciona um workspace existente ao arquivo de allowlist. Se o arquivo ainda nao
+existir, o bridge cria o arquivo a partir das entradas atuais de fallback/env e
+inclui o novo path. A resposta segue o formato:
+
+```json
+{
+  "supported": true,
+  "added": true,
+  "path": "E:\\outro-repo"
+}
+```
+
+`POST /v1/workspaces/remove` remove uma entrada do arquivo de allowlist.
+`POST /v1/workspaces/restore` recoloca uma entrada removida.
+
 ## Approvals
 
 Quando o Codex pedir decisao humana, o stream SSE envia:

@@ -22,7 +22,10 @@ export class WorkspaceService {
 
   capabilities() {
     const fileBacked = fs.existsSync(this.config.workspaceAllowlistFile);
+    const fileParent = path.dirname(this.config.workspaceAllowlistFile);
+    const canCreateFile = isDirectory(fileParent);
     return {
+      add: fileBacked || canCreateFile,
       remove: fileBacked,
       restore: fileBacked
     };
@@ -89,6 +92,45 @@ export class WorkspaceService {
     return {
       supported: true,
       removed,
+      path: resolvedCandidate
+    };
+  }
+
+  addToFileAllowlist(candidate: string) {
+    const resolvedCandidate = path.resolve(candidate);
+
+    if (!isDirectory(resolvedCandidate)) {
+      return {
+        supported: true,
+        added: false,
+        path: resolvedCandidate,
+        reason: "Workspace path does not exist or is not a directory."
+      };
+    }
+
+    if (!fs.existsSync(this.config.workspaceAllowlistFile)) {
+      return this.createFileAllowlist(resolvedCandidate);
+    }
+
+    const content = fs.readFileSync(this.config.workspaceAllowlistFile, "utf8");
+    const entries = parseAllowlistFile(content).map((entry) =>
+      path.resolve(this.config.defaultWorkspace, entry)
+    );
+
+    if (entries.some((entry) => samePath(entry, resolvedCandidate))) {
+      return {
+        supported: true,
+        added: false,
+        path: resolvedCandidate
+      };
+    }
+
+    const prefix = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+    fs.appendFileSync(this.config.workspaceAllowlistFile, `${prefix}${resolvedCandidate}\n`, "utf8");
+
+    return {
+      supported: true,
+      added: true,
       path: resolvedCandidate
     };
   }
@@ -167,6 +209,45 @@ export class WorkspaceService {
     }
 
     return [{ rawPath: this.config.defaultWorkspace, source: "fallback" as const }];
+  }
+
+  private createFileAllowlist(resolvedCandidate: string) {
+    const parent = path.dirname(this.config.workspaceAllowlistFile);
+    if (!isDirectory(parent)) {
+      return {
+        supported: false,
+        added: false,
+        path: resolvedCandidate,
+        reason: "Workspace add is only supported when the allowlist file directory exists."
+      };
+    }
+
+    const rawSources = this.loadRawSources();
+    const entries: string[] = [];
+
+    for (const source of rawSources) {
+      const resolved = path.resolve(this.config.defaultWorkspace, source.rawPath);
+      if (!entries.some((entry) => samePath(entry, resolved))) {
+        entries.push(resolved);
+      }
+    }
+
+    const alreadyPresent = entries.some((entry) => samePath(entry, resolvedCandidate));
+    if (!alreadyPresent) {
+      entries.push(resolvedCandidate);
+    }
+
+    const content = [
+      "# Created by Codex Mobile. One workspace path per line.",
+      ...entries
+    ].join("\n");
+    fs.writeFileSync(this.config.workspaceAllowlistFile, `${content}\n`, "utf8");
+
+    return {
+      supported: true,
+      added: !alreadyPresent,
+      path: resolvedCandidate
+    };
   }
 }
 

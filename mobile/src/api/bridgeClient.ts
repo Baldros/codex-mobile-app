@@ -55,6 +55,13 @@ export class BridgeClient {
     return this.requestJson<{ data: WorkspaceEntry[]; allowlist_file: string }>("/v1/workspaces");
   }
 
+  async addWorkspace(path: string) {
+    return this.requestJson<WorkspaceMutationResponse>("/v1/workspaces/add", {
+      method: "POST",
+      body: JSON.stringify({ path })
+    });
+  }
+
   async removeWorkspace(path: string) {
     return this.requestJson<WorkspaceMutationResponse>("/v1/workspaces/remove", {
       method: "POST",

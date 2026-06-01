@@ -74,6 +74,60 @@ describe("WorkspaceService", () => {
     expect(parseAllowlistFile(fs.readFileSync(allowlistFile, "utf8"))).toEqual([other, repo]);
   });
 
+  it("adds a workspace to an existing allowlist file", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-mobile-workspaces-"));
+    tempDirs.push(root);
+    const repo = path.join(root, "repo");
+    const other = path.join(root, "other");
+    fs.mkdirSync(repo);
+    fs.mkdirSync(other);
+
+    const allowlistFile = path.join(root, "workspaces.allowlist");
+    fs.writeFileSync(allowlistFile, `${repo}\n`);
+
+    const service = new WorkspaceService(testConfig(root, allowlistFile));
+    const added = service.addToFileAllowlist(other);
+
+    expect(added).toMatchObject({ supported: true, added: true, path: other });
+    expect(parseAllowlistFile(fs.readFileSync(allowlistFile, "utf8"))).toEqual([repo, other]);
+
+    const duplicate = service.addToFileAllowlist(other);
+    expect(duplicate).toMatchObject({ supported: true, added: false, path: other });
+    expect(parseAllowlistFile(fs.readFileSync(allowlistFile, "utf8"))).toEqual([repo, other]);
+  });
+
+  it("creates a file allowlist from fallback entries when adding a workspace", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-mobile-workspaces-"));
+    tempDirs.push(root);
+    const other = path.join(root, "other");
+    fs.mkdirSync(other);
+
+    const allowlistFile = path.join(root, "workspaces.allowlist");
+    const service = new WorkspaceService(testConfig(root, allowlistFile));
+    const added = service.addToFileAllowlist(other);
+
+    expect(added).toMatchObject({ supported: true, added: true, path: other });
+    expect(parseAllowlistFile(fs.readFileSync(allowlistFile, "utf8"))).toEqual([root, other]);
+  });
+
+  it("rejects adding a missing workspace path", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-mobile-workspaces-"));
+    tempDirs.push(root);
+    const missing = path.join(root, "missing");
+    const allowlistFile = path.join(root, "workspaces.allowlist");
+
+    const service = new WorkspaceService(testConfig(root, allowlistFile));
+    const added = service.addToFileAllowlist(missing);
+
+    expect(added).toMatchObject({
+      supported: true,
+      added: false,
+      path: missing,
+      reason: "Workspace path does not exist or is not a directory."
+    });
+    expect(fs.existsSync(allowlistFile)).toBe(false);
+  });
+
   it("reports unsupported removal when no allowlist file exists", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-mobile-workspaces-"));
     tempDirs.push(root);

@@ -100,7 +100,7 @@ Os workspaces permitidos ficam em:
 config/workspaces.allowlist
 ```
 
-Um path por linha. O arquivo local e ignorado pelo Git; `config/workspaces.allowlist.example` serve de modelo.
+Um path por linha. O arquivo local e ignorado pelo Git; `config/workspaces.allowlist.example` serve de modelo. O app tambem consegue adicionar um path novo a essa allowlist pelo bridge quando o diretorio do arquivo existe.
 
 ## API
 

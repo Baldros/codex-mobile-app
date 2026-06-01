@@ -34,6 +34,7 @@ export type BridgeCapabilities = {
     list: boolean;
   };
   workspaces: {
+    add: boolean;
     remove: boolean;
     restore: boolean;
   };
@@ -339,6 +340,7 @@ export type PendingApproval = {
 
 export type WorkspaceMutationResponse = {
   supported: boolean;
+  added?: boolean;
   removed?: boolean;
   restored?: boolean;
   path: string;

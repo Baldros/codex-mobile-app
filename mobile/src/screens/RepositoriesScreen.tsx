@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { Check, RefreshCcw, RotateCcw, Trash2 } from "lucide-react-native";
+import { Check, FolderPlus, RefreshCcw, RotateCcw, Trash2 } from "lucide-react-native";
 import React, { useMemo, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -14,7 +14,12 @@ import { compactPath } from "../utils/format";
 export function RepositoriesScreen() {
   const bridge = useBridge();
   const [search, setSearch] = useState("");
+  const [pathInput, setPathInput] = useState("");
+  const [isAdding, setIsAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
   const [lastRemoved, setLastRemoved] = useState<WorkspaceEntry | null>(null);
+  const canAdd = bridge.capabilities.workspaces.add === true;
+  const canSubmitAdd = canAdd && pathInput.trim().length > 0 && !isAdding;
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) {
@@ -25,8 +30,35 @@ export function RepositoriesScreen() {
         workspace.name.toLowerCase().includes(term) ||
         workspace.path.toLowerCase().includes(term) ||
         workspace.source.toLowerCase().includes(term)
-    );
+      );
   }, [bridge.workspaces, search]);
+
+  const handleAddRepository = async () => {
+    const cleanPath = pathInput.trim();
+    if (!cleanPath || !canAdd || isAdding) {
+      return;
+    }
+
+    setIsAdding(true);
+    setAddError(null);
+    const result = await bridge.addWorkspace(cleanPath);
+    setIsAdding(false);
+
+    if (!result) {
+      setAddError("Could not add repository.");
+      return;
+    }
+    if (!result.supported) {
+      setAddError(result.reason ?? "Allowlist is read-only.");
+      return;
+    }
+    if (result.reason) {
+      setAddError(result.reason);
+      return;
+    }
+
+    setPathInput("");
+  };
 
   return (
     <Screen>
@@ -39,6 +71,47 @@ export function RepositoriesScreen() {
         </View>
         <IconAction icon={RefreshCcw} label="Refresh" onPress={() => void bridge.refreshWorkspaces()} />
       </View>
+
+      <View style={styles.addBar}>
+        <TextInput
+          value={pathInput}
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={canAdd && !isAdding}
+          onChangeText={(value) => {
+            setPathInput(value);
+            if (addError) {
+              setAddError(null);
+            }
+          }}
+          onSubmitEditing={() => {
+            if (canSubmitAdd) {
+              void handleAddRepository();
+            }
+          }}
+          placeholder="Desktop repository path"
+          placeholderTextColor={colors.textSubtle}
+          returnKeyType="done"
+          style={[styles.addInput, !canAdd && styles.inputDisabled]}
+        />
+        <IconAction
+          icon={FolderPlus}
+          label="Add repository"
+          variant="filled"
+          disabled={!canSubmitAdd}
+          onPress={() => void handleAddRepository()}
+        />
+      </View>
+      {!canAdd ? (
+        <Text numberOfLines={1} style={styles.statusText}>
+          Allowlist is read-only
+        </Text>
+      ) : null}
+      {addError ? (
+        <Text numberOfLines={2} style={styles.errorText}>
+          {addError}
+        </Text>
+      ) : null}
 
       <TextInput
         value={search}
@@ -175,6 +248,44 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 15,
     fontWeight: fontWeights.body
+  },
+  addBar: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  addInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: fontWeights.body
+  },
+  inputDisabled: {
+    opacity: 0.55
+  },
+  statusText: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    color: colors.textSubtle,
+    fontSize: 12,
+    fontWeight: fontWeights.body
+  },
+  errorText: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xs,
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: fontWeights.subtitle,
+    lineHeight: 16
   },
   undoBand: {
     minHeight: 44,

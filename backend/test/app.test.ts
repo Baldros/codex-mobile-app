@@ -106,12 +106,12 @@ describe("Codex bridge HTTP API", () => {
     const capabilitiesResponse = await fetch(`${baseUrl}/v1/capabilities`);
     const capabilities = (await capabilitiesResponse.json()) as {
       threads: { rename: boolean; archive: boolean };
-      workspaces: { remove: boolean; restore: boolean };
+      workspaces: { add: boolean; remove: boolean; restore: boolean };
     };
 
     expect(capabilitiesResponse.status).toBe(200);
     expect(capabilities.threads).toEqual({ rename: true, archive: false });
-    expect(capabilities.workspaces).toEqual({ remove: false, restore: false });
+    expect(capabilities.workspaces).toEqual({ add: true, remove: false, restore: false });
 
     const archiveResponse = await fetch(`${baseUrl}/v1/threads/${created.thread.id}/archive`, {
       method: "POST",

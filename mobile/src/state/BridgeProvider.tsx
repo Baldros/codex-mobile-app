@@ -134,6 +134,7 @@ type BridgeContextValue = {
   renameThread: (thread: BridgeThread, title: string) => Promise<BridgeThread | null>;
   archiveThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
   restoreThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
+  addWorkspace: (path: string, options?: { select?: boolean }) => Promise<WorkspaceMutationResponse | null>;
   removeWorkspace: (workspace: WorkspaceEntry) => Promise<WorkspaceMutationResponse | null>;
   restoreWorkspace: (path: string) => Promise<WorkspaceMutationResponse | null>;
   createNewThread: () => Promise<void>;
@@ -162,6 +163,7 @@ const DEFAULT_CAPABILITIES: BridgeCapabilities = {
     list: false
   },
   workspaces: {
+    add: false,
     remove: false,
     restore: false
   }
@@ -632,9 +634,21 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setIsRefreshing(true);
     setError(null);
     try {
-      const response = await client.listWorkspaces();
-      setWorkspaces(response.data);
-      setAllowlistFile(response.allowlist_file);
+      const [workspaceResult, capabilitiesResult] = await Promise.allSettled([
+        client.listWorkspaces(),
+        client.capabilities()
+      ]);
+
+      if (workspaceResult.status === "fulfilled") {
+        setWorkspaces(workspaceResult.value.data);
+        setAllowlistFile(workspaceResult.value.allowlist_file);
+      } else {
+        throw workspaceResult.reason;
+      }
+
+      if (capabilitiesResult.status === "fulfilled") {
+        setCapabilities(capabilitiesResult.value);
+      }
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -791,15 +805,63 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     [client, refreshThreads]
   );
 
+  const addWorkspace = useCallback(
+    async (path: string, options: { select?: boolean } = {}) => {
+      const cleanPath = path.trim();
+      if (!cleanPath) {
+        return null;
+      }
+
+      setError(null);
+      try {
+        const response = await client.addWorkspace(cleanPath);
+        if (response.supported) {
+          const [workspaceResponse, capabilitiesResponse] = await Promise.all([
+            client.listWorkspaces(),
+            client.capabilities().catch(() => null)
+          ]);
+          setWorkspaces(workspaceResponse.data);
+          setAllowlistFile(workspaceResponse.allowlist_file);
+          if (capabilitiesResponse) {
+            setCapabilities(capabilitiesResponse);
+          }
+
+          if (options.select && !response.reason) {
+            const workspace = workspaceResponse.data.find((entry) =>
+              sameWorkspacePath(entry.path, response.path)
+            );
+            if (workspace?.exists) {
+              await selectWorkspace(workspace);
+            }
+          }
+        }
+        if (response.reason) {
+          setError(response.reason);
+        }
+        return response;
+      } catch (caught) {
+        setError(errorMessage(caught));
+        return null;
+      }
+    },
+    [client, selectWorkspace]
+  );
+
   const removeWorkspace = useCallback(
     async (workspace: WorkspaceEntry) => {
       setError(null);
       try {
         const response = await client.removeWorkspace(workspace.path);
         if (response.supported && response.removed) {
-          const workspaceResponse = await client.listWorkspaces();
+          const [workspaceResponse, capabilitiesResponse] = await Promise.all([
+            client.listWorkspaces(),
+            client.capabilities().catch(() => null)
+          ]);
           setWorkspaces(workspaceResponse.data);
           setAllowlistFile(workspaceResponse.allowlist_file);
+          if (capabilitiesResponse) {
+            setCapabilities(capabilitiesResponse);
+          }
 
           if (selectedWorkspace?.path === workspace.path) {
             composingNewThreadRef.current = false;
@@ -1539,6 +1601,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       renameThread,
       archiveThread,
       restoreThread,
+      addWorkspace,
       removeWorkspace,
       restoreWorkspace,
       createNewThread,
@@ -1555,6 +1618,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       accountError,
       apps,
       archiveThread,
+      addWorkspace,
       buildConfig,
       cancelRun,
       capabilities,
@@ -1700,6 +1764,10 @@ function removeMessagePart(message: ChatMessage, partId: string): ChatMessage {
 function readConfigString(config: CodexConfigResponse | null, key: string) {
   const value = config?.config?.[key];
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function sameWorkspacePath(left: string, right: string) {
+  return left.toLowerCase() === right.toLowerCase();
 }
 
 function isActiveRunStatus(status: string) {
