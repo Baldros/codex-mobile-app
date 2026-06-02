@@ -8,7 +8,7 @@ build/
 coverage/
 .expo/
 web-build/
-
+docs/
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
