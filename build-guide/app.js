@@ -1,10 +1,10 @@
 /* =========================================================================
-   Codex Mobile — Build Guide :: interações
+   Codex Mobile - Build Guide :: interactions
    ========================================================================= */
 (function () {
   "use strict";
 
-  /* ---------- Tema (persistente) ---------- */
+  /* ---------- Theme (persistent) ---------- */
   var root = document.documentElement;
   var THEME_KEY = "cmg-theme";
   try {
@@ -18,16 +18,16 @@
     try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
   }
 
-  /* ---------- Copiar código (com fallback file://) ---------- */
+  /* ---------- Copy code (with file:// fallback) ---------- */
   function copyText(text, btn) {
     function done() {
       var label = btn.querySelector(".lbl");
       var old = label ? label.textContent : "";
       btn.classList.add("copied");
-      if (label) label.textContent = "Copiado!";
+      if (label) label.textContent = "Copied!";
       setTimeout(function () {
         btn.classList.remove("copied");
-        if (label) label.textContent = old || "Copiar";
+        if (label) label.textContent = old || "Copy";
       }, 1600);
     }
     if (navigator.clipboard && window.isSecureContext) {
@@ -70,7 +70,7 @@
     if (!toc || !content) return;
     var heads = content.querySelectorAll("h2[id], h3[id]");
     if (!heads.length) { toc.style.display = "none"; return; }
-    var html = '<div class="toc__title">Nesta página</div>';
+    var html = '<div class="toc__title">On this page</div>';
     heads.forEach(function (h) {
       var lvl = h.tagName === "H3" ? " lvl-3" : "";
       html += '<a class="toc-link' + lvl + '" href="#' + h.id + '">' + h.textContent + "</a>";
@@ -93,7 +93,7 @@
     heads.forEach(function (h) { spy.observe(h); });
   }
 
-  /* ---------- Checklist persistente ---------- */
+  /* ---------- Persistent checklist ---------- */
   function initChecklist() {
     var list = document.querySelector(".checklist[data-store]");
     if (!list) return;
@@ -109,7 +109,7 @@
       boxes.forEach(function (b) { if (b.checked) done++; });
       var pct = boxes.length ? Math.round((done / boxes.length) * 100) : 0;
       if (fill) fill.style.width = pct + "%";
-      if (label) label.textContent = done + " de " + boxes.length + " etapas concluídas (" + pct + "%)";
+      if (label) label.textContent = done + " of " + boxes.length + " steps completed (" + pct + "%)";
     }
     boxes.forEach(function (b, i) {
       var id = b.getAttribute("data-id") || String(i);
@@ -142,16 +142,16 @@
 
   /* ---------- DOM ready ---------- */
   document.addEventListener("DOMContentLoaded", function () {
-    // tema
+    // theme
     var tt = document.querySelector(".theme-toggle");
     if (tt) tt.addEventListener("click", toggleTheme);
 
-    // menu mobile
+    // mobile menu
     var mt = document.querySelector(".menu-toggle");
     var sb = document.querySelector(".sidebar");
     if (mt && sb) mt.addEventListener("click", function () { sb.classList.toggle("open"); });
 
-    // botões de cópia
+    // copy buttons
     document.querySelectorAll(".code").forEach(function (block) {
       var bar = block.querySelector(".code__bar");
       var pre = block.querySelector("pre");
@@ -161,7 +161,7 @@
       btn.type = "button";
       btn.innerHTML =
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
-        '<span class="lbl">Copiar</span>';
+        '<span class="lbl">Copy</span>';
       btn.addEventListener("click", function () { copyText(pre.innerText, btn); });
       bar.appendChild(btn);
     });
