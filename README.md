@@ -1,77 +1,101 @@
 # Codex Mobile App
 
-Internal mobile companion for operating a local Codex CLI/harness session through SSH tunnel based network security.
+Mobile companion for using a local Codex setup from an Android device through a
+local bridge and an SSH tunnel.
 
-## Technical Direction
+The app is an operations client. It does not talk directly to the OpenAI API and
+does not import the Codex SDK in the mobile bundle. The desktop remains the
+trust boundary: Codex, OpenAI authentication, workspaces, filesystem access, MCP
+servers, apps, skills, and approvals all stay on the machine running the bridge.
 
-The mobile app does not talk directly to the OpenAI API and does not import the Codex SDK in the client. The target architecture is:
+## Architecture
 
 ```text
-Mobile app
+Android app
   -> http://127.0.0.1:18080
   -> SSH local port forward
   -> desktop 127.0.0.1:8787
-  -> Codex Bridge Node/TypeScript
-  -> codex app-server, Codex SDK, or codex exec
-  -> local Codex CLI/harness
+  -> Codex Bridge (Node.js + TypeScript)
+  -> codex app-server or @openai/codex-sdk
+  -> local Codex CLI/runtime
 ```
 
-This direction follows the current official Codex documentation:
+The default runtime is `app-server`, because it supports richer Codex client
+behavior: persisted conversations, settings, model/account data, apps, skills,
+MCP resources, streamed events, and human-in-the-loop approvals. The SDK runtime
+is still available as a simpler adapter, and `mock` is available for tests and
+local development without calling Codex.
 
-- Codex SDK: https://developers.openai.com/codex/sdk
+Official Codex references:
+
 - Codex app-server: https://developers.openai.com/codex/app-server
+- Codex SDK: https://developers.openai.com/codex/sdk
 - Codex CLI reference: https://developers.openai.com/codex/cli/reference
-- Remote app-server notes: https://developers.openai.com/codex/cli/features#connect-the-tui-to-a-remote-app-server
 
-## Conventions
+## Stack
 
-- Local bridge: `127.0.0.1:8787`
-- Local mobile port: `127.0.0.1:18080`
-- Remote port forwarded by SSH: `127.0.0.1:8787`
-- Default mobile transport: `ssh_tunnel`
-- Bridge stack: Node.js + TypeScript
-- App stack: Expo + React Native + TypeScript
+- Backend runtime: Node.js
+- Backend language: TypeScript
+- Backend package manager/scripts: npm
+- Mobile app: Expo + React Native + TypeScript
+- Android native tunnel module: Kotlin + Gradle, using JSch
+- Transport: HTTP/SSE over loopback, carried through SSH local port forwarding
 
-## Documentation
+Conventions:
 
-- `docs/ARCHITECTURE.md`: target architecture and decisions from Atlas Desktop Agent.
-- `docs/API_CONTRACT.md`: HTTP/SSE contract between mobile and bridge.
-- `docs/SSH_TUNNEL_RUNBOOK.md`: SSH tunnel operation on local networks and 5G.
-- `docs/MOBILE_ANDROID_BUILD_PLAYBOOK.md`: internal Android build and `CODEX_MOBILE_*` variables.
-- `docs/SECURITY_DECISIONS.md`: decision on embedded SSH password/key.
-- `docs/IMPLEMENTATION_PLAN.md`: incremental implementation plan.
-- `build-guide/README.md`: interactive HTML build guide for the Android APK.
+- Desktop bridge: `127.0.0.1:8787`
+- Mobile loopback tunnel: `127.0.0.1:18080`
+- Default mobile gateway: `ssh_tunnel`
+- Default bridge runtime: `app-server`
+
+## Repository Layout
+
+- `backend/`: local Codex Bridge. Exposes the HTTP/SSE API consumed by mobile and
+  wraps the selected Codex runtime.
+- `mobile/`: Expo/React Native app plus the native Android SSH tunnel module.
+- `build-guide/`: interactive HTML guide for building, installing, securing, and
+  troubleshooting the Android APK.
+- `docs/`: architecture, API contract, SSH, security, and Android build notes.
+- `config/workspaces.allowlist.example`: template for allowed local workspaces.
+- `scripts/`: smoke tests and SSH validation helpers.
 
 ## Backend
-
-The local backend is in `backend/`. It exposes a loopback HTTP/SSE API, normalizes the contract for mobile, and encapsulates the real Codex runtime.
 
 ```powershell
 cd backend
 npm install
 npm run dev
+```
+
+Useful checks:
+
+```powershell
 npm test
 npm run typecheck
 npm run build
 npm run smoke:app-server
 ```
 
-Supported runtimes:
-
-- `app-server`: recommended for native history, settings, and human-in-the-loop.
-- `sdk`: simple adapter through `@openai/codex-sdk`.
-- `mock`: deterministic runtime for tests and development without calling Codex.
-
-Example running in mock mode:
+Runtime selection:
 
 ```powershell
-$env:CODEX_BRIDGE_RUNTIME="mock"
+$env:CODEX_BRIDGE_RUNTIME = "app-server" # default
 npm run dev
 ```
 
-## Mobile
+Supported values are:
 
-The mobile app is in `mobile/`. The current MVP includes the operational shell, workspace/model/conversation selection, SSE chat, activity events, pending approvals, cancellation, and a basic settings screen.
+- `app-server`: uses `codex app-server` over stdio JSON-RPC. Recommended.
+- `sdk`: uses `@openai/codex-sdk`.
+- `mock`: deterministic runtime for tests and UI work.
+
+The bridge listens on `127.0.0.1:8787` by default. Confirm it with:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8787/health
+```
+
+## Mobile
 
 ```powershell
 cd mobile
@@ -79,38 +103,93 @@ npm install
 npx expo start
 ```
 
-Use `npx expo start --web` or `npm run web` for a quick browser preview during development.
+For browser preview during development:
+
+```powershell
+npm run web
+```
 
 Default URLs:
 
-- Local web/dev: `http://127.0.0.1:8787`
-- Physical mobile device: `http://127.0.0.1:18080`
+- Web/dev preview: `http://127.0.0.1:8787`
+- Physical Android device with SSH tunnel: `http://127.0.0.1:18080`
 
-To override the bridge URL:
+The Android tunnel is a local Expo native module under
+`mobile/modules/codex-ssh-tunnel/`. Expo Go cannot load this module; use a dev
+build or APK for the real Android tunnel flow.
 
-```powershell
-$env:EXPO_PUBLIC_BRIDGE_URL="http://127.0.0.1:8787"
-npx expo start
+## Android APK Build
+
+The complete build path is documented in the interactive guide:
+
+```text
+build-guide/index.html
 ```
+
+Open it directly in a browser after cloning the repo. No local server is needed.
+It covers prerequisites, SSH setup, `CODEX_MOBILE_*` build variables, APK
+generation, install, security tradeoffs, and troubleshooting.
+
+The short version is:
+
+1. Start the bridge on the desktop and confirm `/health`.
+2. Configure OpenSSH with a dedicated, unprivileged tunnel user.
+3. Set `CODEX_MOBILE_*` variables for the app build.
+4. Build the native Android project and release APK.
+5. Install the APK and validate the tunnel on Wi-Fi and 5G.
+
+Any SSH password or private key embedded into the APK must be treated as
+recoverable. Use a per-device key, restrict `PermitOpen` to the bridge loopback,
+and rotate credentials when needed.
 
 ## Workspaces
 
-Allowed workspaces live at:
+Allowed workspaces are read from:
 
 ```text
 config/workspaces.allowlist
 ```
 
-One path per line. The local file is ignored by Git; `config/workspaces.allowlist.example` is the template. The app can also add a new path to this allowlist through the bridge when the directory exists.
+The file is ignored by Git. Use `config/workspaces.allowlist.example` as the
+template. The bridge also exposes workspace add/remove/restore endpoints, so the
+mobile app can update the allowlist without rebuilding the APK.
 
 ## API
 
-The bridge exposes the HTTP/SSE API on loopback. The complete canonical endpoint reference is in `backend/README.md` (health/capabilities, threads, runs with SSE streaming and reattach, workspaces, settings, apps/skills, MCP, approvals, and SSH status). Start with `GET /v1/capabilities` to discover what the active runtime supports.
+The bridge exposes an HTTP/SSE contract on loopback. The canonical endpoint
+reference is in `backend/README.md`.
 
-## Build Guide
+Start with:
 
-The interactive build guide is in `build-guide/`. Open `build-guide/index.html` directly in a browser to walk through prerequisites, SSH setup, release APK build, installation, security guidance, and troubleshooting.
+- `GET /health`
+- `GET /v1/capabilities`
+
+The current API includes thread creation/listing/history, run streaming and
+reattach, cancellation, workspace management, filesystem browsing, model/config
+settings, account/rate-limit reads, apps, skills, MCP server/resource access,
+approvals, and SSH status.
+
+## Documentation
+
+- `backend/README.md`: backend structure, runtime details, and endpoint list.
+- `mobile/README.md`: mobile setup, build config, features, and app structure.
+- `build-guide/README.md`: overview of the interactive Android build guide.
+- `docs/ARCHITECTURE.md`: architecture decisions and trust boundaries.
+- `docs/API_CONTRACT.md`: HTTP/SSE contract between mobile and bridge.
+- `docs/SSH_USER_SETUP_GUIDE.md`: dedicated SSH user setup.
+- `docs/SSH_TUNNEL_RUNBOOK.md`: SSH tunnel operation on local networks and 5G.
+- `docs/MOBILE_ANDROID_BUILD_PLAYBOOK.md`: Android build playbook.
+- `docs/SECURITY_DECISIONS.md`: embedded secret and tunnel security decisions.
+- `docs/IMPLEMENTATION_PLAN.md`: implementation status and remaining work.
 
 ## Current State
 
-The technical foundation, local bridge, and mobile app are implemented and operational. The app covers workspace/model/conversation selection, streaming chat with Markdown rendering, activity and tool timeline, human-in-the-loop approvals, cancellation, structured mentions (`$app`/`$skill`/`$mcp`), MCP resource navigation, account limits and execution mode presets, plus the SSH tunnel manager. The main next steps are hardening app failure states and adding pairing/operational security for internal use on local networks or 5G.
+The bridge and mobile app are implemented and operational for the internal
+Android flow. Current functionality includes workspace selection, conversation
+management, streaming chat, Markdown rendering, activity/tool timeline,
+human-in-the-loop approvals, cancellation, model and reasoning controls, account
+limits, execution presets, apps/skills/MCP navigation, settings, and SSH tunnel
+management.
+
+The main remaining work is hardening failure states and improving pairing and
+operational security for broader internal use.
