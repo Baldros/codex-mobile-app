@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { AppServerBridgeService } from "../src/appServer/AppServerBridgeService.js";
-import type { AppServerClient } from "../src/appServer/AppServerClient.js";
+import type {
+  AppServerClient,
+  AppServerNotification,
+  AppServerRequest
+} from "../src/appServer/AppServerClient.js";
 import type { BridgeConfig } from "../src/config.js";
 import { WorkspaceService } from "../src/workspaces/WorkspaceService.js";
 
@@ -83,13 +87,88 @@ describe("AppServerBridgeService thread actions", () => {
       }
     ]);
   });
+
+  it("passes xhigh reasoning effort to app-server turn start", async () => {
+    const client = new CapturingAppServerClient();
+    const service = new AppServerBridgeService({
+      config: testConfig(),
+      client: client as unknown as AppServerClient,
+      workspaceService: new WorkspaceService(testConfig())
+    });
+
+    const events = service.runThread(
+      "thr_1",
+      {
+        message: "use maximum effort",
+        cwd: process.cwd(),
+        model_reasoning_effort: "xhigh"
+      },
+      new AbortController().signal
+    );
+
+    const firstEvent = await events.next();
+    await events.return(undefined);
+
+    expect(firstEvent.value).toEqual({
+      event: "run_started",
+      data: {
+        thread_id: "thr_1",
+        run_id: "turn_1"
+      }
+    });
+
+    const turnStart = client.requests.find((request) => request.method === "turn/start");
+    expect(turnStart?.params).toMatchObject({
+      threadId: "thr_1",
+      effort: "xhigh"
+    });
+    expect(turnStart?.params).not.toHaveProperty("modelReasoningEffort");
+    expect(turnStart?.params).not.toHaveProperty("model_reasoning_effort");
+  });
+
+  it("starts thread compaction and waits for the compacted notification", async () => {
+    const client = new CapturingAppServerClient();
+    const service = new AppServerBridgeService({
+      config: testConfig(),
+      client: client as unknown as AppServerClient,
+      workspaceService: new WorkspaceService(testConfig())
+    });
+
+    const compact = service.compactThread("thr_1");
+    await Promise.resolve();
+    client.emitNotification({
+      method: "thread/compacted",
+      params: {
+        threadId: "thr_1",
+        turnId: "turn_1"
+      }
+    });
+
+    await expect(compact).resolves.toEqual({
+      supported: true,
+      compacted: true,
+      thread_id: "thr_1"
+    });
+    expect(client.requests.at(-1)).toEqual({
+      method: "thread/compact/start",
+      params: { threadId: "thr_1" }
+    });
+  });
 });
 
 class CapturingAppServerClient {
   readonly requests: Array<{ method: string; params: unknown }> = [];
+  private readonly notificationListeners = new Set<(message: AppServerNotification) => void>();
+  private readonly serverRequestListeners = new Set<(message: AppServerRequest) => void>();
 
   async request(method: string, params?: unknown) {
     this.requests.push({ method, params });
+    if (method === "thread/resume") {
+      return { thread: { id: "thr_1" } };
+    }
+    if (method === "turn/start") {
+      return { turn: { id: "turn_1" } };
+    }
     if (method === "thread/read" || method === "thread/unarchive") {
       return {
         thread: {
@@ -121,6 +200,22 @@ class CapturingAppServerClient {
       return { data: [] };
     }
     return {};
+  }
+
+  onNotification(listener: (message: AppServerNotification) => void) {
+    this.notificationListeners.add(listener);
+    return () => this.notificationListeners.delete(listener);
+  }
+
+  onServerRequest(listener: (message: AppServerRequest) => void) {
+    this.serverRequestListeners.add(listener);
+    return () => this.serverRequestListeners.delete(listener);
+  }
+
+  emitNotification(message: AppServerNotification) {
+    for (const listener of this.notificationListeners) {
+      listener(message);
+    }
   }
 }
 

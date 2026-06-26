@@ -116,6 +116,19 @@ export function mapAppServerNotification(
         }
       ];
 
+    case "thread/compacted":
+      return [
+        {
+          event: "context_compaction",
+          data: {
+            thread_id: threadId,
+            run_id: turnId,
+            item_id: `context_compaction_${turnId}`,
+            status: "completed"
+          }
+        }
+      ];
+
     case "error":
       return [
         {
@@ -242,6 +255,19 @@ function mapAppServerItem(
             kind: "file_change",
             changes: item.changes,
             status: item.status
+          }
+        }
+      ];
+
+    case "contextCompaction":
+      return [
+        {
+          event: "context_compaction",
+          data: {
+            thread_id: threadId,
+            run_id: turnId,
+            item_id: item.id,
+            status: state === "started" ? "running" : "completed"
           }
         }
       ];

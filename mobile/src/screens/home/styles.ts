@@ -838,6 +838,13 @@ export const styles = StyleSheet.create({
   menuItems: {
     gap: spacing.sm
   },
+  menuSectionTitle: {
+    color: colors.textSubtle,
+    fontSize: 10,
+    fontWeight: fontWeights.label,
+    textTransform: "uppercase",
+    marginTop: spacing.xs
+  },
   optionList: {
     maxHeight: 360
   },

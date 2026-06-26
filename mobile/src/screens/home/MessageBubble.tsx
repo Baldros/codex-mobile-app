@@ -7,6 +7,7 @@ import {
   Clock3,
   Code2,
   FileCode2,
+  Minimize2,
   ShieldCheck,
   Terminal,
   X
@@ -168,6 +169,7 @@ function ActivityTimelinePart({
   const [detailsVisible, setDetailsVisible] = useState(false);
   const tone = activityTone(part.status);
   const canOpenDetails = hasToolDetails(part);
+  const Icon = activityIcon(part);
 
   return (
     <View style={[styles.timelineRow, !isFirst && styles.messagePartSpacing]}>
@@ -185,7 +187,7 @@ function ActivityTimelinePart({
       >
         <View style={styles.timelineHeader}>
           <View style={styles.timelineTitleWrap}>
-            <Terminal size={14} color={tone.color} />
+            <Icon size={14} color={tone.color} />
             <Text numberOfLines={1} style={styles.timelineTitle}>
               {part.title}
             </Text>
@@ -362,6 +364,17 @@ function messageParts(message: ChatMessage): ChatMessagePart[] {
 
 function hasToolDetails(part: Extract<ChatMessagePart, { type: "activity" }>) {
   return Boolean(part.detail || part.output || part.toolDetails);
+}
+
+function activityIcon(part: Extract<ChatMessagePart, { type: "activity" }>) {
+  const kind = stringValue(part.toolDetails?.kind);
+  if (kind === "context_compaction" || kind === "contextCompaction") {
+    return Minimize2;
+  }
+  if (part.title === "Compacting conversation" || part.title === "Conversation compacted") {
+    return Minimize2;
+  }
+  return Terminal;
 }
 
 function toolDetailSections(part: Extract<ChatMessagePart, { type: "activity" }>) {

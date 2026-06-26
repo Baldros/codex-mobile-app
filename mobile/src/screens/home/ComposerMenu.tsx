@@ -1,6 +1,17 @@
-import { Bot, Check, ChevronLeft, ChevronRight, Gauge, Menu, ShieldCheck, X, Zap } from "lucide-react-native";
+import {
+  Bot,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Gauge,
+  Menu,
+  Minimize2,
+  ShieldCheck,
+  X,
+  Zap
+} from "lucide-react-native";
 import React, { useState } from "react";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { IconAction } from "../../components/IconAction";
@@ -33,6 +44,15 @@ export function ComposerMenu({
   const fastTiers = fastTierOptionsForModel(selectedModel);
   const currentFastTier = fastTiers.find((tier) => tier.id === bridge.serviceTier) ?? null;
   const fastEnabled = fastTiers.length > 0;
+  const compactBusy = Boolean(
+    bridge.selectedThread && bridge.compactingThreadId === bridge.selectedThread.id
+  );
+  const compactDisabled =
+    !bridge.selectedThread ||
+    !bridge.capabilities.threads.compact ||
+    bridge.isRunning ||
+    bridge.isComposerLocked ||
+    compactBusy;
 
   const close = () => {
     setVisible(false);
@@ -103,6 +123,26 @@ export function ComposerMenu({
                   onPress={() => {
                     close();
                     onOpenLimits();
+                  }}
+                />
+                <Text style={styles.menuSectionTitle}>Conversation</Text>
+                <MenuItem
+                  icon={
+                    compactBusy ? (
+                      <ActivityIndicator color={colors.warning} size="small" />
+                    ) : (
+                      <Minimize2
+                        size={18}
+                        color={compactDisabled ? colors.textSubtle : colors.textMuted}
+                      />
+                    )
+                  }
+                  label="Compact conversation"
+                  detail={compactMenuDetail(bridge)}
+                  disabled={compactDisabled}
+                  onPress={() => {
+                    close();
+                    void bridge.compactThread();
                   }}
                 />
               </View>
@@ -177,6 +217,22 @@ export function ComposerMenu({
       </Modal>
     </>
   );
+}
+
+function compactMenuDetail(bridge: ReturnType<typeof useBridge>) {
+  if (bridge.compactingThreadId && bridge.compactingThreadId === bridge.selectedThread?.id) {
+    return "Compacting...";
+  }
+  if (!bridge.selectedThread) {
+    return "No conversation";
+  }
+  if (!bridge.capabilities.threads.compact) {
+    return "Unavailable";
+  }
+  if (bridge.isRunning || bridge.isComposerLocked) {
+    return "Busy";
+  }
+  return null;
 }
 
 function MenuItem({

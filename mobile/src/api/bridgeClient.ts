@@ -17,6 +17,7 @@ import type {
   PendingApproval,
   RunStreamBody,
   ThreadArchiveResponse,
+  ThreadCompactResponse,
   WorkspaceMutationResponse,
   WorkspaceEntry
 } from "../domain/bridge";
@@ -138,6 +139,16 @@ export class BridgeClient {
       {
         method: "POST",
         body: JSON.stringify({ archived })
+      }
+    );
+  }
+
+  async compactThread(threadId: string) {
+    return this.requestJson<ThreadCompactResponse>(
+      `/v1/threads/${encodeURIComponent(threadId)}/compact`,
+      {
+        method: "POST",
+        body: "{}"
       }
     );
   }

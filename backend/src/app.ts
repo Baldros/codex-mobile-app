@@ -136,6 +136,22 @@ async function routeRequest(
     return;
   }
 
+  const threadCompactMatch = pathname.match(/^\/v1\/threads\/([^/]+)\/compact$/);
+  if (method === "POST" && threadCompactMatch) {
+    const threadId = decodeURIComponent(threadCompactMatch[1]!);
+    if (typeof threadService.compactThread !== "function") {
+      sendJson(res, 200, {
+        supported: false,
+        compacted: false,
+        thread_id: threadId,
+        reason: "Thread compaction is not supported by this bridge runtime."
+      });
+      return;
+    }
+    sendJson(res, 200, await threadService.compactThread(threadId));
+    return;
+  }
+
   const runStreamMatch = pathname.match(/^\/v1\/threads\/([^/]+)\/runs\/stream$/);
   if (method === "POST" && runStreamMatch) {
     const threadId = decodeURIComponent(runStreamMatch[1]!);
@@ -373,7 +389,8 @@ function buildCapabilitiesResponse(
   return {
     threads: {
       rename: typeof threadService.renameThread === "function",
-      archive: typeof threadService.archiveThread === "function"
+      archive: typeof threadService.archiveThread === "function",
+      compact: typeof threadService.compactThread === "function"
     },
     mcp: {
       list: typeof threadService.listMcpServers === "function",

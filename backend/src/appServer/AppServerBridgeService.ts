@@ -54,6 +54,7 @@ type McpResourceReadResponse = {
 };
 
 const MAX_MCP_RESOURCE_TEXT_LENGTH = 40_000;
+const COMPACT_TIMEOUT_MS = 120_000;
 
 export class AppServerBridgeService {
   private readonly activeRuns = new Map<string, ActiveRun>();
@@ -189,6 +190,23 @@ export class AppServerBridgeService {
       thread_id: threadId,
       archived: false,
       thread: response.thread ? toPublicThread(response.thread) : null
+    };
+  }
+
+  async compactThread(threadId: string) {
+    const waitForCompaction = this.waitForCompaction(threadId);
+    try {
+      await this.deps.client.request("thread/compact/start", { threadId });
+      await waitForCompaction.promise;
+    } catch (caught) {
+      waitForCompaction.dispose();
+      throw caught;
+    }
+
+    return {
+      supported: true,
+      compacted: true,
+      thread_id: threadId
     };
   }
 
@@ -459,6 +477,57 @@ export class AppServerBridgeService {
 
     return turnInput;
   }
+
+  private waitForCompaction(threadId: string) {
+    let timeout: NodeJS.Timeout | null = null;
+    let disposed = false;
+    let offNotification: () => void = () => undefined;
+
+    const dispose = () => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      offNotification();
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    };
+
+    const promise = new Promise<void>((resolve, reject) => {
+      offNotification = this.deps.client.onNotification((message) => {
+        if (!messageBelongsToThread(message, threadId)) {
+          return;
+        }
+
+        if (isCompactionCompleted(message)) {
+          dispose();
+          resolve();
+          return;
+        }
+
+        if (message.method === "error") {
+          const params = asRecord(message.params);
+          dispose();
+          reject(new AppError(502, "compact_failed", asString(params.message) ?? "Thread compaction failed."));
+        }
+      });
+
+      timeout = setTimeout(() => {
+        dispose();
+        reject(
+          new AppError(
+            504,
+            "compact_timeout",
+            "Thread compaction did not finish before the timeout."
+          )
+        );
+      }, COMPACT_TIMEOUT_MS);
+      timeout.unref();
+    });
+
+    return { promise, dispose };
+  }
 }
 
 function toPublicThread(thread: AppServerThread) {
@@ -530,6 +599,28 @@ async function runCodexCommand(args: string[]) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function asString(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function isCompactionCompleted(message: AppServerNotification) {
+  if (message.method === "thread/compacted") {
+    return true;
+  }
+
+  if (message.method !== "item/completed") {
+    return false;
+  }
+
+  const params = asRecord(message.params);
+  const item = asRecord(params.item);
+  return item.type === "contextCompaction";
 }
 
 function errorMessage(error: unknown) {

@@ -100,17 +100,17 @@ describe("Codex bridge HTTP API", () => {
     expect(body.thread.title).toBe("Renamed from mobile");
   });
 
-  it("reports archive support through capabilities and unsupported archive responses", async () => {
+  it("reports thread action support through capabilities and unsupported action responses", async () => {
     const created = await createThread(baseUrl, { workspace: process.cwd() });
 
     const capabilitiesResponse = await fetch(`${baseUrl}/v1/capabilities`);
     const capabilities = (await capabilitiesResponse.json()) as {
-      threads: { rename: boolean; archive: boolean };
+      threads: { rename: boolean; archive: boolean; compact: boolean };
       workspaces: { add: boolean; remove: boolean; restore: boolean };
     };
 
     expect(capabilitiesResponse.status).toBe(200);
-    expect(capabilities.threads).toEqual({ rename: true, archive: false });
+    expect(capabilities.threads).toEqual({ rename: true, archive: false, compact: false });
     expect(capabilities.workspaces).toEqual({ add: true, remove: false, restore: false });
 
     const archiveResponse = await fetch(`${baseUrl}/v1/threads/${created.thread.id}/archive`, {
@@ -122,6 +122,16 @@ describe("Codex bridge HTTP API", () => {
 
     expect(archiveResponse.status).toBe(200);
     expect(archive).toMatchObject({ supported: false, archived: false });
+
+    const compactResponse = await fetch(`${baseUrl}/v1/threads/${created.thread.id}/compact`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}"
+    });
+    const compact = (await compactResponse.json()) as { supported: boolean; compacted: boolean };
+
+    expect(compactResponse.status).toBe(200);
+    expect(compact).toMatchObject({ supported: false, compacted: false });
   });
 
   it("streams a Codex run as SSE", async () => {

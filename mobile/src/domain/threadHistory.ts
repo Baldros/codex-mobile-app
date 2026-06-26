@@ -322,6 +322,16 @@ function activityPartFromHistoryItem(
     };
   }
 
+  if (type === "contextcompaction" || type === "context_compaction") {
+    const id = asString(item.id) ?? historyId("compact", turnId, itemIndex);
+    return {
+      id: activityPartId(id),
+      type: "activity",
+      title: "Conversation compacted",
+      status: "done"
+    };
+  }
+
   const result = toolResultsByCallId.get(asString(item.id) ?? "");
   return result
     ? {

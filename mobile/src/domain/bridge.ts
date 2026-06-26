@@ -39,6 +39,7 @@ export type BridgeCapabilities = {
   threads: {
     rename: boolean;
     archive: boolean;
+    compact: boolean;
   };
   mcp?: {
     list: boolean;
@@ -91,6 +92,13 @@ export type ThreadArchiveResponse = {
   thread_id: string;
   reason?: string;
   thread?: BridgeThread | null;
+};
+
+export type ThreadCompactResponse = {
+  supported: boolean;
+  compacted: boolean;
+  thread_id: string;
+  reason?: string;
 };
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";

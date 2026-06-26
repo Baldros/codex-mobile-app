@@ -41,6 +41,7 @@ import type {
   RunInputItem,
   SandboxMode,
   ThreadArchiveResponse,
+  ThreadCompactResponse,
   WorkspaceMutationResponse,
   WorkspaceEntry
 } from "../domain/bridge";
@@ -58,7 +59,16 @@ import {
 import { messagesFromThread } from "../domain/threadHistory";
 import { loadPreferences, savePreferences } from "../storage/preferences";
 import { SshTunnelManager, type TunnelStatusSnapshot } from "../transport/SshTunnelManager";
-import { asNumber, asString, createId, errorMessage, lowerString, normalizeUrl, trimMiddle } from "../utils/value";
+import {
+  asNumber,
+  asRecord,
+  asString,
+  createId,
+  errorMessage,
+  lowerString,
+  normalizeUrl,
+  trimMiddle
+} from "../utils/value";
 
 type BridgeContextValue = {
   preferences: BridgePreferences;
@@ -98,6 +108,8 @@ type BridgeContextValue = {
   isRefreshingMcp: boolean;
   isLoadingThreadContent: boolean;
   isRunning: boolean;
+  compactingThreadId: string | null;
+  isCompactingThread: boolean;
   isComposerLocked: boolean;
   error: string | null;
   accountError: string | null;
@@ -138,6 +150,7 @@ type BridgeContextValue = {
   renameThread: (thread: BridgeThread, title: string) => Promise<BridgeThread | null>;
   archiveThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
   restoreThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
+  compactThread: (thread?: BridgeThread) => Promise<ThreadCompactResponse | null>;
   addWorkspace: (path: string, options?: { select?: boolean }) => Promise<WorkspaceMutationResponse | null>;
   removeWorkspace: (workspace: WorkspaceEntry) => Promise<WorkspaceMutationResponse | null>;
   restoreWorkspace: (path: string) => Promise<WorkspaceMutationResponse | null>;
@@ -153,7 +166,8 @@ const BridgeContext = createContext<BridgeContextValue | null>(null);
 const DEFAULT_CAPABILITIES: BridgeCapabilities = {
   threads: {
     rename: false,
-    archive: false
+    archive: false,
+    compact: false
   },
   mcp: {
     list: false,
@@ -202,6 +216,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [isRefreshingMcp, setIsRefreshingMcp] = useState(false);
   const [isLoadingThreadContent, setIsLoadingThreadContent] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [compactingThreadId, setCompactingThreadId] = useState<string | null>(null);
   const [isComposerLocked, setIsComposerLocked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
@@ -1266,6 +1281,18 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       return;
     }
 
+    if (event.event === "context_compaction") {
+      const running = asString(data.status) === "running";
+      const activity = {
+        id: asString(data.item_id) ?? createId("compact"),
+        title: running ? "Compacting conversation" : "Conversation compacted",
+        status: running ? "running" : "done"
+      } as const;
+      addOrUpdateActivity(activity);
+      addOrUpdateAssistantActivity(assistantMessageId, activity);
+      return;
+    }
+
     if (event.event === "todo_list") {
       const activity = {
         id: asString(data.item_id) ?? createId("todo"),
@@ -1479,6 +1506,144 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     );
   }, []);
 
+  const upsertStandaloneActivityMessage = useCallback(
+    (messageId: string, threadId: string, activity: ActivityItem, pending: boolean) => {
+      addOrUpdateActivity(activity);
+      if (selectedThreadRef.current?.id !== threadId) {
+        return;
+      }
+
+      setMessages((current) => {
+        let updated = false;
+        const next = current.map((item) => {
+          if (item.id !== messageId) {
+            return item;
+          }
+          updated = true;
+          return {
+            ...upsertActivityPart(item, activity),
+            pending
+          };
+        });
+
+        if (updated) {
+          return next;
+        }
+
+        return [
+          ...current,
+          upsertActivityPart(
+            {
+              id: messageId,
+              role: "assistant",
+              text: "",
+              parts: [],
+              pending
+            },
+            activity
+          )
+        ];
+      });
+    },
+    [addOrUpdateActivity]
+  );
+
+  const compactThread = useCallback(
+    async (thread?: BridgeThread) => {
+      const target = thread ?? selectedThreadRef.current;
+      if (!target) {
+        return null;
+      }
+
+      if (!capabilities.threads.compact) {
+        const response = {
+          supported: false,
+          compacted: false,
+          thread_id: target.id,
+          reason: "Thread compaction is not supported by this bridge runtime."
+        };
+        setError(response.reason);
+        return response;
+      }
+
+      if (isRunning || isComposerLocked || compactingThreadId) {
+        return null;
+      }
+
+      const idSeed = `${target.id}_${Date.now()}`;
+      const messageId = `assistant_compact_${idSeed}`;
+      const activityId = `compact_${idSeed}`;
+      const runningActivity = {
+        id: activityId,
+        title: "Compacting conversation",
+        status: "running"
+      } as const;
+
+      setCompactingThreadId(target.id);
+      setIsComposerLocked(true);
+      setError(null);
+      upsertStandaloneActivityMessage(messageId, target.id, runningActivity, true);
+
+      try {
+        const response = await client.compactThread(target.id);
+        if (response.supported && response.compacted) {
+          const doneActivity = {
+            id: activityId,
+            title: "Conversation compacted",
+            status: "done"
+          } as const;
+          const workspacePath = target.cwd ?? selectedWorkspace?.path;
+          if (workspacePath) {
+            await loadThreadsForWorkspace(workspacePath, target.id).catch(() => null);
+          }
+          const refreshedThread =
+            selectedThreadRef.current?.id === target.id ? selectedThreadRef.current : null;
+          if (!threadHasCompactionMarker(refreshedThread)) {
+            upsertStandaloneActivityMessage(messageId, target.id, doneActivity, false);
+          } else {
+            addOrUpdateActivity(doneActivity);
+          }
+        } else {
+          const reason = response.reason ?? "Thread compaction did not complete.";
+          const failedActivity = {
+            id: activityId,
+            title: "Compaction failed",
+            detail: reason,
+            status: "failed"
+          } as const;
+          setError(reason);
+          upsertStandaloneActivityMessage(messageId, target.id, failedActivity, false);
+        }
+        return response;
+      } catch (caught) {
+        const message = errorMessage(caught);
+        const failedActivity = {
+          id: activityId,
+          title: "Compaction failed",
+          detail: message,
+          status: "failed"
+        } as const;
+        setError(message);
+        upsertStandaloneActivityMessage(messageId, target.id, failedActivity, false);
+        return null;
+      } finally {
+        setCompactingThreadId((current) => (current === target.id ? null : current));
+        setIsComposerLocked(false);
+      }
+    },
+    [
+      addOrUpdateActivity,
+      capabilities.threads.compact,
+      client,
+      compactingThreadId,
+      isComposerLocked,
+      isRunning,
+      loadThreadsForWorkspace,
+      selectedWorkspace?.path,
+      upsertStandaloneActivityMessage
+    ]
+  );
+
   const cancelRun = useCallback(async () => {
     const selectedRun =
       activeRuns.find((run) => run.thread_id === selectedThread?.id) ??
@@ -1586,6 +1751,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       isRefreshingMcp,
       isLoadingThreadContent,
       isRunning,
+      compactingThreadId,
+      isCompactingThread: Boolean(compactingThreadId),
       isComposerLocked,
       error,
       accountError,
@@ -1614,6 +1781,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       renameThread,
       archiveThread,
       restoreThread,
+      compactThread,
       addWorkspace,
       removeWorkspace,
       restoreWorkspace,
@@ -1635,6 +1803,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       buildConfig,
       cancelRun,
       capabilities,
+      compactingThreadId,
+      compactThread,
       config,
       createNewThread,
       error,
@@ -1774,6 +1944,33 @@ function removeMessagePart(message: ChatMessage, partId: string): ChatMessage {
     ...message,
     parts: parts.filter((part) => part.id !== partId)
   };
+}
+
+function threadHasCompactionMarker(thread: BridgeThread | null) {
+  const turns = Array.isArray(thread?.turns) ? thread.turns : [];
+  return turns.some((turn) => {
+    const record = asRecord(turn);
+    if (!record) {
+      return false;
+    }
+
+    const items = [
+      record.items,
+      record.output,
+      record.responses,
+      record.messages,
+      record.events,
+      record.steps
+    ].find((value) => Array.isArray(value));
+
+    return Array.isArray(items)
+      ? items.some((item) => {
+          const itemRecord = asRecord(item);
+          const type = lowerString(itemRecord?.type);
+          return type === "contextcompaction" || type === "context_compaction";
+        })
+      : false;
+  });
 }
 
 function readConfigString(config: CodexConfigResponse | null, key: string) {
