@@ -1,5 +1,6 @@
 import type {
   ApprovalMode,
+  Input,
   ModelReasoningEffort,
   SandboxMode,
   ThreadEvent,
@@ -9,6 +10,7 @@ import type {
 import type { BridgeRuntime } from "../config.js";
 
 export type RuntimeThreadEvent = ThreadEvent;
+export type RuntimeThreadInput = Input;
 
 export type CodexRuntimeHealth = {
   runtime: BridgeRuntime;
@@ -36,7 +38,10 @@ export type RuntimeTurnOptions = {
 
 export type RuntimeThread = {
   get id(): string | null;
-  runStreamed(input: string, options: RuntimeTurnOptions): Promise<AsyncGenerator<RuntimeThreadEvent>>;
+  runStreamed(
+    input: RuntimeThreadInput,
+    options: RuntimeTurnOptions
+  ): Promise<AsyncGenerator<RuntimeThreadEvent>>;
 };
 
 export type CodexRuntime = {

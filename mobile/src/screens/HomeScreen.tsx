@@ -1,4 +1,6 @@
 import { router } from "expo-router";
+import * as FileSystem from "expo-file-system/legacy";
+import * as ImagePicker from "expo-image-picker";
 import {
   FolderPlus,
   FolderGit2,
@@ -12,7 +14,10 @@ import {
 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   FlatList,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -27,11 +32,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconAction } from "../components/IconAction";
 import { Screen } from "../components/Screen";
 import { StatusPill } from "../components/StatusPill";
-import type { ChatMessage } from "../domain/bridge";
+import type { ChatMessage, UploadedImage } from "../domain/bridge";
 import { activeMentionTrigger, buildMentionItems, type ComposerMention } from "../domain/mentions";
 import { useBridge } from "../state/BridgeProvider";
 import { colors, spacing } from "../theme/colors";
 import { compactPath } from "../utils/format";
+import { errorMessage } from "../utils/value";
 import { ComposerMenu } from "./home/ComposerMenu";
 import { EmptyChat } from "./home/EmptyChat";
 import { FolderPickerModal } from "./home/FolderPickerModal";
@@ -47,6 +53,8 @@ export function HomeScreen() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [selectedMentions, setSelectedMentions] = useState<ComposerMention[]>([]);
+  const [selectedImages, setSelectedImages] = useState<SelectedImageAttachment[]>([]);
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
   const [limitsVisible, setLimitsVisible] = useState(false);
   const [folderPickerVisible, setFolderPickerVisible] = useState(false);
   const messageListRef = useRef<FlatList<ChatMessage> | null>(null);
@@ -56,9 +64,10 @@ export function HomeScreen() {
     [bridge.models, bridge.selectedModelId]
   );
   const canSend =
-    draft.trim().length > 0 &&
+    (draft.trim().length > 0 || selectedImages.length > 0) &&
     !bridge.isRunning &&
     !bridge.isComposerLocked &&
+    !isUploadingImages &&
     Boolean(bridge.selectedWorkspace);
   const mentionTrigger = useMemo(() => activeMentionTrigger(draft), [draft]);
   const mentionItems = useMemo(
@@ -130,6 +139,7 @@ export function HomeScreen() {
 
   useEffect(() => {
     mentionLoadRequested.current = false;
+    setSelectedImages([]);
   }, [bridge.selectedWorkspace?.path, bridge.selectedThread?.id]);
 
   useEffect(() => {
@@ -164,11 +174,81 @@ export function HomeScreen() {
     setDraft((current) => current.replace(mention.token, "").replace(/\s{2,}/g, " "));
   };
 
+  const handlePickImages = async () => {
+    if (!bridge.selectedWorkspace || bridge.isRunning || bridge.isComposerLocked || isUploadingImages) {
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsMultipleSelection: true,
+        selectionLimit: 4,
+        orderedSelection: true,
+        quality: 0.95,
+        base64: false,
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible
+      });
+
+      if (result.canceled || !result.assets?.length) {
+        return;
+      }
+
+      setIsUploadingImages(true);
+      const uploaded: SelectedImageAttachment[] = [];
+      for (const asset of result.assets) {
+        if (asset.type && asset.type !== "image") {
+          continue;
+        }
+
+        const dataBase64 = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType.Base64
+        });
+        const image = await bridge.uploadImage({
+          filename: asset.fileName ?? imageNameFromUri(asset.uri),
+          mimeType: asset.mimeType ?? mimeTypeFromName(asset.fileName ?? asset.uri),
+          dataBase64
+        });
+
+        if (image) {
+          uploaded.push({
+            ...image,
+            localUri: asset.uri,
+            width: asset.width,
+            height: asset.height
+          });
+        }
+      }
+
+      if (uploaded.length > 0) {
+        setSelectedImages((current) => [...current, ...uploaded].slice(0, 8));
+      }
+    } catch (caught) {
+      Alert.alert("Image upload failed", errorMessage(caught));
+    } finally {
+      setIsUploadingImages(false);
+    }
+  };
+
+  const removeImage = (imageId: string) => {
+    setSelectedImages((current) => current.filter((image) => image.id !== imageId));
+  };
+
   const handleSend = () => {
-    const value = draft;
-    const inputItems = selectedMentions.map((mention) => mention.inputItem);
+    const value = draft.trim().length > 0 ? draft : defaultImagePrompt(selectedImages.length);
+    const imageItems = selectedImages.map((image) => ({
+      type: "image" as const,
+      path: image.path,
+      name: image.filename,
+      mime_type: image.mime_type
+    }));
+    const inputItems = [
+      ...selectedMentions.map((mention) => mention.inputItem),
+      ...imageItems
+    ];
     setDraft("");
     setSelectedMentions([]);
+    setSelectedImages([]);
     void bridge.sendMessage(value, inputItems);
   };
 
@@ -273,12 +353,55 @@ export function HomeScreen() {
           <View style={styles.composerRow}>
             <ComposerMenu
               selectedModel={selectedModel}
+              imageCount={selectedImages.length}
+              isPickingImages={isUploadingImages}
+              onPickImages={handlePickImages}
               onOpenLimits={() => {
                 setLimitsVisible(true);
                 void bridge.refreshAccount();
               }}
             />
             <View style={styles.composerInputWrap}>
+              {selectedImages.length > 0 || isUploadingImages ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.imageChips}>
+                  {selectedImages.map((image) => (
+                    <View key={image.id} style={styles.imageChip}>
+                      <Image source={{ uri: image.localUri }} style={styles.imageChipPreview} />
+                      <View style={styles.imageChipTextWrap}>
+                        <Text numberOfLines={1} style={styles.imageChipTitle}>
+                          {image.filename}
+                        </Text>
+                        <Text numberOfLines={1} style={styles.imageChipDetail}>
+                          {formatImageSize(image.size_bytes)}
+                        </Text>
+                      </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${image.filename}`}
+                        onPress={() => removeImage(image.id)}
+                        style={({ pressed }) => [styles.imageChipRemove, pressed && styles.menuItemPressed]}
+                      >
+                        <X size={13} color={colors.textMuted} />
+                      </Pressable>
+                    </View>
+                  ))}
+                  {isUploadingImages ? (
+                    <View style={styles.imageChip}>
+                      <View style={styles.imageChipLoading}>
+                        <ActivityIndicator size="small" color={colors.accent} />
+                      </View>
+                      <View style={styles.imageChipTextWrap}>
+                        <Text numberOfLines={1} style={styles.imageChipTitle}>
+                          Uploading image
+                        </Text>
+                        <Text numberOfLines={1} style={styles.imageChipDetail}>
+                          Preparing for Codex
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
+                </ScrollView>
+              ) : null}
               {selectedMentions.length > 0 ? (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mentionChips}>
                   {selectedMentions.map((mention) => (
@@ -326,4 +449,37 @@ export function HomeScreen() {
       </KeyboardAvoidingView>
     </Screen>
   );
+}
+
+type SelectedImageAttachment = UploadedImage & {
+  localUri: string;
+  width?: number;
+  height?: number;
+};
+
+function imageNameFromUri(uri: string) {
+  const name = uri.split(/[\\/]/).pop()?.split("?")[0];
+  return name && name.length > 0 ? name : "image.jpg";
+}
+
+function mimeTypeFromName(name: string) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".png")) {
+    return "image/png";
+  }
+  if (lower.endsWith(".webp")) {
+    return "image/webp";
+  }
+  return "image/jpeg";
+}
+
+function defaultImagePrompt(count: number) {
+  return count === 1 ? "Please analyze the attached image." : "Please analyze the attached images.";
+}
+
+function formatImageSize(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }

@@ -6,6 +6,7 @@ import { Codex, type Thread, type ThreadOptions } from "@openai/codex-sdk";
 import type {
   CodexRuntime,
   CodexRuntimeHealth,
+  RuntimeThreadInput,
   RuntimeThread,
   RuntimeThreadOptions,
   RuntimeTurnOptions
@@ -54,7 +55,7 @@ class SdkRuntimeThread implements RuntimeThread {
     return this.thread.id;
   }
 
-  async runStreamed(input: string, options: RuntimeTurnOptions) {
+  async runStreamed(input: RuntimeThreadInput, options: RuntimeTurnOptions) {
     const { events } = await this.thread.runStreamed(input, {
       signal: options.signal
     });

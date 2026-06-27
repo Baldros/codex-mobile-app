@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Gauge,
+  ImagePlus,
   Menu,
   Minimize2,
   ShieldCheck,
@@ -31,9 +32,15 @@ type MenuPanel = "main" | "models" | "effort" | "fast";
 
 export function ComposerMenu({
   selectedModel,
+  imageCount,
+  isPickingImages,
+  onPickImages,
   onOpenLimits
 }: {
   selectedModel: CodexModel | null;
+  imageCount: number;
+  isPickingImages: boolean;
+  onPickImages: () => void;
   onOpenLimits: () => void;
 }) {
   const bridge = useBridge();
@@ -53,6 +60,11 @@ export function ComposerMenu({
     bridge.isRunning ||
     bridge.isComposerLocked ||
     compactBusy;
+  const imageDisabled =
+    !bridge.selectedWorkspace ||
+    bridge.isRunning ||
+    bridge.isComposerLocked ||
+    isPickingImages;
 
   const close = () => {
     setVisible(false);
@@ -94,6 +106,31 @@ export function ComposerMenu({
 
             {panel === "main" ? (
               <View style={styles.menuItems}>
+                <MenuItem
+                  icon={
+                    isPickingImages ? (
+                      <ActivityIndicator color={colors.accent} size="small" />
+                    ) : (
+                      <ImagePlus
+                        size={18}
+                        color={imageDisabled ? colors.textSubtle : colors.textMuted}
+                      />
+                    )
+                  }
+                  label="Send image"
+                  detail={imageMenuDetail({
+                    selectedWorkspace: Boolean(bridge.selectedWorkspace),
+                    isRunning: bridge.isRunning,
+                    isComposerLocked: bridge.isComposerLocked,
+                    isPickingImages,
+                    imageCount
+                  })}
+                  disabled={imageDisabled}
+                  onPress={() => {
+                    close();
+                    onPickImages();
+                  }}
+                />
                 <MenuItem
                   icon={<Bot size={18} color={colors.textMuted} />}
                   label="Models"
@@ -217,6 +254,34 @@ export function ComposerMenu({
       </Modal>
     </>
   );
+}
+
+function imageMenuDetail({
+  selectedWorkspace,
+  isRunning,
+  isComposerLocked,
+  isPickingImages,
+  imageCount
+}: {
+  selectedWorkspace: boolean;
+  isRunning: boolean;
+  isComposerLocked: boolean;
+  isPickingImages: boolean;
+  imageCount: number;
+}) {
+  if (isPickingImages) {
+    return "Uploading...";
+  }
+  if (!selectedWorkspace) {
+    return "No repository";
+  }
+  if (isRunning || isComposerLocked) {
+    return "Busy";
+  }
+  if (imageCount > 0) {
+    return imageCount === 1 ? "1 attached" : `${imageCount} attached`;
+  }
+  return "Gallery";
 }
 
 function compactMenuDetail(bridge: ReturnType<typeof useBridge>) {

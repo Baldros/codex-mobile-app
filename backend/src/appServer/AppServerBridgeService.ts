@@ -6,6 +6,7 @@ import { AppError } from "../errors.js";
 import type { CodexRuntimeHealth } from "../runtime/types.js";
 import type { BridgeSseEvent } from "../sse.js";
 import type { RunStreamBody } from "../validation.js";
+import { assertUploadedImagePath } from "../uploads/imageUploads.js";
 import { WorkspaceService } from "../workspaces/WorkspaceService.js";
 import { AsyncQueue } from "../asyncQueue.js";
 
@@ -42,7 +43,8 @@ type AppServerThread = {
 type AppServerUserInput =
   | { type: "text"; text: string }
   | { type: "mention"; name: string; path: string }
-  | { type: "skill"; name: string; path: string };
+  | { type: "skill"; name: string; path: string }
+  | { type: "localImage"; path: string };
 
 type McpResourceReadResponse = {
   contents?: Array<{
@@ -458,6 +460,14 @@ export class AppServerBridgeService {
           type: item.type,
           name: item.name,
           path: item.path
+        });
+        continue;
+      }
+
+      if (item.type === "image") {
+        turnInput.push({
+          type: "localImage",
+          path: assertUploadedImagePath(item.path)
         });
         continue;
       }

@@ -101,6 +101,24 @@ export type ThreadCompactResponse = {
   reason?: string;
 };
 
+export type UploadedImage = {
+  id: string;
+  filename: string;
+  path: string;
+  mime_type: string;
+  size_bytes: number;
+};
+
+export type ImageUploadRequest = {
+  filename?: string;
+  mimeType: string;
+  dataBase64: string;
+};
+
+export type ImageUploadResponse = {
+  image: UploadedImage;
+};
+
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 export type ApprovalPolicy = "never" | "on-request" | "on-failure" | "untrusted";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
@@ -280,6 +298,12 @@ export type RunInputItem =
       uri: string;
       name?: string;
       title?: string;
+    }
+  | {
+      type: "image";
+      path: string;
+      name?: string;
+      mime_type?: string;
     };
 
 export type RunStreamBody = {

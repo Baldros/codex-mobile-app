@@ -8,6 +8,8 @@ import type {
   CodexAccountResponse,
   CodexAppsResponse,
   CodexConfigResponse,
+  ImageUploadRequest,
+  ImageUploadResponse,
   CodexModel,
   CodexSkillsResponse,
   DirectoryChildrenResponse,
@@ -151,6 +153,17 @@ export class BridgeClient {
         body: "{}"
       }
     );
+  }
+
+  async uploadImage(input: ImageUploadRequest) {
+    return this.requestJson<ImageUploadResponse>("/v1/uploads/images", {
+      method: "POST",
+      body: JSON.stringify({
+        filename: input.filename,
+        mime_type: input.mimeType,
+        data_base64: input.dataBase64
+      })
+    });
   }
 
   async listModels(limit = 50) {

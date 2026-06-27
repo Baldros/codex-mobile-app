@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import fs from "node:fs";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +7,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import type { BridgeConfig } from "../src/config.js";
 import { MockCodexRuntime } from "../src/runtime/MockCodexRuntime.js";
-import type { RuntimeThreadOptions } from "../src/runtime/types.js";
+import type {
+  CodexRuntime,
+  CodexRuntimeHealth,
+  RuntimeThread,
+  RuntimeThreadEvent,
+  RuntimeThreadInput,
+  RuntimeThreadOptions,
+  RuntimeTurnOptions
+} from "../src/runtime/types.js";
 import { InMemoryThreadStore } from "../src/threads/InMemoryThreadStore.js";
 import { ThreadService } from "../src/threads/ThreadService.js";
 
@@ -153,6 +162,64 @@ describe("Codex bridge HTTP API", () => {
       "done"
     ]);
     expect(events.at(-1)?.data).toMatchObject({ status: "completed" });
+  });
+
+  it("uploads image attachments and passes them to the SDK runtime", async () => {
+    await close(server);
+    const config = testConfig();
+    const inputRuntime = new CapturingInputRuntime();
+    const threadService = new ThreadService({
+      config,
+      runtime: inputRuntime,
+      store: new InMemoryThreadStore()
+    });
+    server = createServer(createApp({ config, threadService }));
+    baseUrl = await listen(server);
+
+    const uploadResponse = await fetch(`${baseUrl}/v1/uploads/images`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: "screenshot.png",
+        mime_type: "image/png",
+        data_base64: Buffer.from("fake png").toString("base64")
+      })
+    });
+    const upload = (await uploadResponse.json()) as {
+      image: { path: string; filename: string; mime_type: string; size_bytes: number };
+    };
+
+    expect(uploadResponse.status).toBe(201);
+    expect(upload.image).toMatchObject({
+      filename: "screenshot.png",
+      mime_type: "image/png",
+      size_bytes: 8
+    });
+    expect(fs.existsSync(upload.image.path)).toBe(true);
+
+    const created = await createThread(baseUrl, { workspace: process.cwd() });
+    const runResponse = await fetch(`${baseUrl}/v1/threads/${created.thread.id}/runs/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "describe this screenshot",
+        input_items: [
+          {
+            type: "image",
+            path: upload.image.path,
+            name: upload.image.filename,
+            mime_type: upload.image.mime_type
+          }
+        ]
+      })
+    });
+
+    expect(runResponse.status).toBe(200);
+    await runResponse.text();
+    expect(inputRuntime.lastInput).toEqual([
+      { type: "text", text: "describe this screenshot" },
+      { type: "local_image", path: upload.image.path }
+    ]);
   });
 
   it("passes execution settings to the runtime", async () => {
@@ -443,6 +510,67 @@ class CapturingMockCodexRuntime extends MockCodexRuntime {
   override resumeThread(id: string, options: RuntimeThreadOptions) {
     this.lastOptions = options;
     return super.resumeThread(id, options);
+  }
+}
+
+class CapturingInputRuntime implements CodexRuntime {
+  readonly name = "mock" as const;
+  lastInput: RuntimeThreadInput | null = null;
+
+  async health(): Promise<CodexRuntimeHealth> {
+    return {
+      runtime: this.name,
+      ready: true,
+      auth: "ok",
+      codexCliVersion: "mock",
+      checks: {
+        codex_cli: "skipped",
+        codex_auth: "skipped"
+      }
+    };
+  }
+
+  startThread(): RuntimeThread {
+    return new CapturingInputThread(this);
+  }
+
+  resumeThread(): RuntimeThread {
+    return new CapturingInputThread(this);
+  }
+}
+
+class CapturingInputThread implements RuntimeThread {
+  constructor(private readonly runtime: CapturingInputRuntime) {}
+
+  get id() {
+    return "captured_thread";
+  }
+
+  async runStreamed(input: RuntimeThreadInput, _options: RuntimeTurnOptions) {
+    this.runtime.lastInput = input;
+
+    async function* events(): AsyncGenerator<RuntimeThreadEvent> {
+      yield { type: "thread.started", thread_id: "captured_thread" };
+      yield {
+        type: "item.completed",
+        item: {
+          id: "item_1",
+          type: "agent_message",
+          text: "captured"
+        }
+      };
+      yield {
+        type: "turn.completed",
+        usage: {
+          input_tokens: 1,
+          cached_input_tokens: 0,
+          output_tokens: 1,
+          reasoning_output_tokens: 0
+        }
+      };
+    }
+
+    return events();
   }
 }
 

@@ -18,12 +18,17 @@ import {
   ApprovalResponseBodySchema,
   CancelRunBodySchema,
   CreateThreadBodySchema,
+  ImageUploadBodySchema,
   McpResourceReadBodySchema,
   RenameThreadBodySchema,
   RunStreamBodySchema,
   WorkspacePathBodySchema,
   WriteConfigBodySchema
 } from "./validation.js";
+import {
+  IMAGE_UPLOAD_JSON_LIMIT_BYTES,
+  saveUploadedImage
+} from "./uploads/imageUploads.js";
 
 export type AppDependencies = {
   config?: BridgeConfig;
@@ -86,6 +91,12 @@ async function routeRequest(
 
   if (method === "GET" && pathname === "/v1/capabilities") {
     sendJson(res, 200, buildCapabilitiesResponse(threadService, workspaceService));
+    return;
+  }
+
+  if (method === "POST" && pathname === "/v1/uploads/images") {
+    const body = ImageUploadBodySchema.parse(await readJson(req, IMAGE_UPLOAD_JSON_LIMIT_BYTES));
+    sendJson(res, 201, { image: await saveUploadedImage(body) });
     return;
   }
 
@@ -534,15 +545,15 @@ function requireCapability<T extends keyof BridgeThreadService>(
   return value.bind(service) as NonNullable<BridgeThreadService[T]>;
 }
 
-async function readJson(req: IncomingMessage) {
+async function readJson(req: IncomingMessage, maxBytes = 1024 * 1024) {
   const chunks: Buffer[] = [];
   let size = 0;
 
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.byteLength;
-    if (size > 1024 * 1024) {
-      throw new AppError(413, "payload_too_large", "JSON body is larger than 1 MiB.");
+    if (size > maxBytes) {
+      throw new AppError(413, "payload_too_large", `JSON body is larger than ${formatBytes(maxBytes)}.`);
     }
     chunks.push(buffer);
   }
@@ -590,4 +601,14 @@ function trimTrailingSlash(pathname: string) {
     return pathname.slice(0, -1);
   }
   return pathname;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes % (1024 * 1024) === 0) {
+    return `${bytes / (1024 * 1024)} MiB`;
+  }
+  if (bytes % 1024 === 0) {
+    return `${bytes / 1024} KiB`;
+  }
+  return `${bytes} bytes`;
 }

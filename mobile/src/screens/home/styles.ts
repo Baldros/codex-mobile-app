@@ -514,6 +514,59 @@ export const styles = StyleSheet.create({
     fontWeight: fontWeights.body,
     lineHeight: 20
   },
+  imageChips: {
+    gap: spacing.xs,
+    paddingRight: spacing.sm
+  },
+  imageChip: {
+    width: 188,
+    minHeight: 52,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    padding: spacing.xs,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  imageChipPreview: {
+    width: 40,
+    height: 40,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceMuted
+  },
+  imageChipLoading: {
+    width: 40,
+    height: 40,
+    borderRadius: radii.sm,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.accentSoft
+  },
+  imageChipTextWrap: {
+    flex: 1,
+    minWidth: 0
+  },
+  imageChipTitle: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: fontWeights.action
+  },
+  imageChipDetail: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: fontWeights.body,
+    marginTop: 2
+  },
+  imageChipRemove: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surfaceMuted
+  },
   mentionChips: {
     gap: spacing.xs,
     paddingRight: spacing.sm

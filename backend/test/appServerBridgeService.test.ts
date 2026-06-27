@@ -7,6 +7,7 @@ import type {
   AppServerRequest
 } from "../src/appServer/AppServerClient.js";
 import type { BridgeConfig } from "../src/config.js";
+import { saveUploadedImage } from "../src/uploads/imageUploads.js";
 import { WorkspaceService } from "../src/workspaces/WorkspaceService.js";
 
 describe("AppServerBridgeService thread actions", () => {
@@ -124,6 +125,48 @@ describe("AppServerBridgeService thread actions", () => {
     });
     expect(turnStart?.params).not.toHaveProperty("modelReasoningEffort");
     expect(turnStart?.params).not.toHaveProperty("model_reasoning_effort");
+  });
+
+  it("passes uploaded image attachments to app-server as local images", async () => {
+    const client = new CapturingAppServerClient();
+    const service = new AppServerBridgeService({
+      config: testConfig(),
+      client: client as unknown as AppServerClient,
+      workspaceService: new WorkspaceService(testConfig())
+    });
+    const image = await saveUploadedImage({
+      filename: "screen.png",
+      mime_type: "image/png",
+      data_base64: Buffer.from("fake png").toString("base64")
+    });
+
+    const events = service.runThread(
+      "thr_1",
+      {
+        message: "describe this screenshot",
+        cwd: process.cwd(),
+        input_items: [
+          {
+            type: "image",
+            path: image.path,
+            name: image.filename,
+            mime_type: image.mime_type
+          }
+        ]
+      },
+      new AbortController().signal
+    );
+
+    await events.next();
+    await events.return(undefined);
+
+    const turnStart = client.requests.find((request) => request.method === "turn/start");
+    expect(turnStart?.params).toMatchObject({
+      input: [
+        { type: "text", text: "describe this screenshot" },
+        { type: "localImage", path: image.path }
+      ]
+    });
   });
 
   it("starts thread compaction and waits for the compacted notification", async () => {

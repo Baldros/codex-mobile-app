@@ -22,6 +22,12 @@ const RunInputItemSchema = z.discriminatedUnion("type", [
     uri: z.string().trim().min(1),
     name: z.string().trim().min(1).optional(),
     title: z.string().trim().min(1).optional()
+  }),
+  z.object({
+    type: z.literal("image"),
+    path: z.string().trim().min(1),
+    name: z.string().trim().min(1).optional(),
+    mime_type: z.string().trim().min(1).optional()
   })
 ]);
 
@@ -73,6 +79,12 @@ export const McpResourceReadBodySchema = z.object({
   thread_id: z.string().trim().min(1).nullable().optional()
 });
 
+export const ImageUploadBodySchema = z.object({
+  filename: z.string().trim().min(1).max(255).optional(),
+  mime_type: z.string().trim().min(1).max(100),
+  data_base64: z.string().trim().min(1)
+});
+
 export type CreateThreadBody = z.infer<typeof CreateThreadBodySchema>;
 export type RunStreamBody = z.infer<typeof RunStreamBodySchema>;
 export type CancelRunBody = z.infer<typeof CancelRunBodySchema>;
@@ -82,3 +94,4 @@ export type WorkspacePathBody = z.infer<typeof WorkspacePathBodySchema>;
 export type WriteConfigBody = z.infer<typeof WriteConfigBodySchema>;
 export type ApprovalResponseBody = z.infer<typeof ApprovalResponseBodySchema>;
 export type McpResourceReadBody = z.infer<typeof McpResourceReadBodySchema>;
+export type ImageUploadBody = z.infer<typeof ImageUploadBodySchema>;

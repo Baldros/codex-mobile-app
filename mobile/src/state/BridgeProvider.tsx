@@ -34,6 +34,7 @@ import type {
   CodexSkill,
   DirectoryChildrenResponse,
   DirectoryRootsResponse,
+  ImageUploadRequest,
   McpResourceReadResponse,
   McpServerStatus,
   PendingApproval,
@@ -42,6 +43,7 @@ import type {
   SandboxMode,
   ThreadArchiveResponse,
   ThreadCompactResponse,
+  UploadedImage,
   WorkspaceMutationResponse,
   WorkspaceEntry
 } from "../domain/bridge";
@@ -151,6 +153,7 @@ type BridgeContextValue = {
   archiveThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
   restoreThread: (thread: BridgeThread) => Promise<ThreadArchiveResponse | null>;
   compactThread: (thread?: BridgeThread) => Promise<ThreadCompactResponse | null>;
+  uploadImage: (input: ImageUploadRequest) => Promise<UploadedImage | null>;
   addWorkspace: (path: string, options?: { select?: boolean }) => Promise<WorkspaceMutationResponse | null>;
   removeWorkspace: (workspace: WorkspaceEntry) => Promise<WorkspaceMutationResponse | null>;
   restoreWorkspace: (path: string) => Promise<WorkspaceMutationResponse | null>;
@@ -1644,6 +1647,20 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     ]
   );
 
+  const uploadImage = useCallback(
+    async (input: ImageUploadRequest) => {
+      setError(null);
+      try {
+        const response = await client.uploadImage(input);
+        return response.image;
+      } catch (caught) {
+        setError(errorMessage(caught));
+        return null;
+      }
+    },
+    [client]
+  );
+
   const cancelRun = useCallback(async () => {
     const selectedRun =
       activeRuns.find((run) => run.thread_id === selectedThread?.id) ??
@@ -1782,6 +1799,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       archiveThread,
       restoreThread,
       compactThread,
+      uploadImage,
       addWorkspace,
       removeWorkspace,
       restoreWorkspace,
@@ -1851,6 +1869,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       tunnelConfigIssue,
       threads,
       updatePreferences,
+      uploadImage,
       workspaces
     ]
   );

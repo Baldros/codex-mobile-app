@@ -5,7 +5,13 @@ import { AppError } from "../errors.js";
 import type { BridgeSseEvent } from "../sse.js";
 import type { RunStreamBody } from "../validation.js";
 import { mapRuntimeEvent } from "../runtime/mapRuntimeEvent.js";
-import type { CodexRuntime, RuntimeThread, RuntimeThreadOptions } from "../runtime/types.js";
+import type {
+  CodexRuntime,
+  RuntimeThread,
+  RuntimeThreadInput,
+  RuntimeThreadOptions
+} from "../runtime/types.js";
+import { assertUploadedImagePath } from "../uploads/imageUploads.js";
 import { WorkspaceService } from "../workspaces/WorkspaceService.js";
 
 import { InMemoryThreadStore, type ThreadRecord } from "./InMemoryThreadStore.js";
@@ -91,7 +97,7 @@ export class ThreadService {
 
     try {
       const runtimeThread = this.getOrCreateRuntimeThread(thread, cwd, input);
-      const events = await runtimeThread.runStreamed(input.message, {
+      const events = await runtimeThread.runStreamed(buildRuntimeInput(input), {
         signal: controller.signal
       });
 
@@ -251,4 +257,20 @@ function toPublicThread(thread: ThreadRecord) {
 
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function buildRuntimeInput(input: RunStreamBody): RuntimeThreadInput {
+  const imageItems =
+    input.input_items
+      ?.filter((item) => item.type === "image")
+      .map((item) => ({
+        type: "local_image" as const,
+        path: assertUploadedImagePath(item.path)
+      })) ?? [];
+
+  if (imageItems.length === 0) {
+    return input.message;
+  }
+
+  return [{ type: "text", text: input.message }, ...imageItems];
 }

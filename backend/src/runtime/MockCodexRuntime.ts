@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
   CodexRuntime,
   CodexRuntimeHealth,
+  RuntimeThreadInput,
   RuntimeThread,
   RuntimeThreadEvent,
   RuntimeThreadOptions,
@@ -54,10 +55,11 @@ class MockRuntimeThread implements RuntimeThread {
     return this.threadId;
   }
 
-  async runStreamed(input: string, options: RuntimeTurnOptions) {
+  async runStreamed(input: RuntimeThreadInput, options: RuntimeTurnOptions) {
     const threadId = this.threadId ?? `codex_mock_${randomUUID()}`;
     const delayMs = this.delayMs;
     this.threadId = threadId;
+    const prompt = typeof input === "string" ? input : input.map(describeInputItem).join(" ");
 
     async function* events(): AsyncGenerator<RuntimeThreadEvent> {
       yield { type: "thread.started", thread_id: threadId };
@@ -68,7 +70,7 @@ class MockRuntimeThread implements RuntimeThread {
         item: {
           id: `item_${randomUUID()}`,
           type: "agent_message",
-          text: `Mock Codex response: ${input}`
+          text: `Mock Codex response: ${prompt}`
         }
       };
       await abortableDelay(delayMs, options.signal);
@@ -85,6 +87,13 @@ class MockRuntimeThread implements RuntimeThread {
 
     return events();
   }
+}
+
+function describeInputItem(item: Exclude<RuntimeThreadInput, string>[number]) {
+  if (item.type === "text") {
+    return item.text;
+  }
+  return `[image:${item.path}]`;
 }
 
 function abortableDelay(delayMs: number, signal: AbortSignal) {
