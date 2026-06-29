@@ -17,13 +17,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@openai/codex-sdk": "^0.137.0",
+    "@openai/codex-sdk": "^0.142.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^25.9.2",
+    "@types/node": "^26.0.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.9"
   }
 }
