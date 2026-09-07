@@ -107,8 +107,33 @@ Apps, skills e MCP
 Aprovacoes e setup
 
 - `POST /v1/approvals/:approvalId/respond`
-- `GET /v1/setup/ssh/status`
+- `GET /v1/setup/ssh/status` (legado, do desenho com tunnel SSH)
 
 Rotas que dependem de capability (models, config, account, features, apps, skills, MCP, aprovacoes, rename) retornam erro quando o runtime ativo nao as suporta. Consulte `GET /v1/capabilities` para descobrir o que esta disponivel.
 
-O servidor deve ficar em `127.0.0.1:8787`. O mobile acessa essa API por SSH tunnel.
+## Bind e exposicao
+
+Em desenvolvimento no proprio desktop, o servidor fica em `127.0.0.1:8787`.
+
+Para acesso pelo celular, ele deve ser vinculado ao endereco do host dentro do
+tunnel WireGuard:
+
+```powershell
+$env:CODEX_BRIDGE_HOST = "10.77.77.1"
+$env:CODEX_BRIDGE_PORT = "8787"
+node dist/server.js
+```
+
+Confirme onde ele ficou escutando:
+
+```powershell
+Get-NetTCPConnection -State Listen -LocalPort 8787 | Select-Object LocalAddress
+```
+
+Deve aparecer somente o endereco pretendido. `0.0.0.0` significa API exposta na
+LAN.
+
+**Nao ha autenticacao HTTP nesta API.** A unica fronteira e o peer WireGuard
+autenticado somado ao endereco de bind, e o servidor responde com
+`Access-Control-Allow-Origin: *`. Nunca vincule a um endereco publico e nunca
+encaminhe a porta `8787` em roteador.

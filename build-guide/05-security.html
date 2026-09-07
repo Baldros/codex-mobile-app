@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Security · Codex Mobile</title>
-  <meta name="description" content="Codex Mobile security decisions: embedded credential, environment variables, credential rotation, and repository rules." />
+  <meta name="description" content="Codex Mobile security: what the WireGuard design protects, what it does not, the open gaps in the bridge, and the hardening plan." />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2310a37f'/></svg>" />
 </head>
@@ -19,7 +19,7 @@
     <nav class="topnav">
       <a href="01-architecture.html">Architecture</a>
       <a href="02-prerequisites.html">Prerequisites</a>
-      <a href="03-ssh-setup.html">SSH</a>
+      <a href="03-wireguard-setup.html">VPN</a>
       <a href="04-build-run.html">Build</a>
       <a href="05-security.html" class="active">Security</a>
     </nav>
@@ -36,7 +36,7 @@
         <a href="index.html"><span class="num">★</span> Overview</a>
         <a href="01-architecture.html"><span class="num">1</span> Architecture</a>
         <a href="02-prerequisites.html"><span class="num">2</span> Prerequisites</a>
-        <a href="03-ssh-setup.html"><span class="num">3</span> SSH Tunnel</a>
+        <a href="03-wireguard-setup.html"><span class="num">3</span> WireGuard VPN</a>
         <a href="04-build-run.html"><span class="num">4</span> Build & Run</a>
         <a href="05-security.html" class="active"><span class="num">5</span> Security</a>
         <a href="06-troubleshooting.html"><span class="num">6</span> Troubleshooting</a>
@@ -47,140 +47,252 @@
       <p class="eyebrow">Chapter 5</p>
       <h1>Security</h1>
       <p class="lead">
-        Embedding an SSH credential in the app is not a technical problem — it is a <strong>security decision</strong>.
-        This page defines when this is acceptable, when it becomes a serious risk and what controls make it
-        defensible internal profile.
+        This page is deliberately honest about what this design protects and what it does not.
+        The WireGuard transport is strong. The application behind it currently has
+        <strong>no authentication at all</strong> — read this before you decide the setup is
+        good enough for your situation.
       </p>
 
-      <section id="premissa">
-        <h2>The premise</h2>
-        <div class="callout callout--danger">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
-          <div><p>Any password, private key or token placed within the APK, bundle, asset, build constant or local storage must be treated as <strong>recoverable</strong> by anyone who has access to the binary, the device, a backup or a debug environment.</p></div>
+      <section id="ativos">
+        <h2>What is actually at stake</h2>
+        <p>
+          This is not a chat app. The bridge is a path to <strong>code execution with your desktop
+          user's privileges</strong>. Sizing the risk starts with naming the assets:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Asset</th><th>Where it lives</th><th>Impact if compromised</th></tr></thead>
+            <tbody>
+              <tr><td>Codex / OpenAI credential</td><td>desktop user profile</td><td>account misuse, cost, access to history</td></tr>
+              <tr><td>Desktop filesystem</td><td>your drives</td><td>reading and writing code, secrets, keys</td></tr>
+              <tr><td>Command execution</td><td>Codex app-server</td><td>arbitrary execution as the logged-in user</td></tr>
+              <tr><td>Conversation history</td><td><code>~/.codex/sessions</code></td><td>leak of working context</td></tr>
+              <tr><td>Host WireGuard key</td><td>host, restricted ACL</td><td>impersonating the host</td></tr>
+              <tr><td>Device WireGuard key</td><td>Android keystore</td><td>access to the private network</td></tr>
+            </tbody>
+          </table>
         </div>
-        <p>For this internal project, the decision is <strong>to support</strong> built-in credential as internal build profile — as long as risk is limited by system configuration <code>sshd</code>, dedicated user and rotation.</p>
       </section>
 
-      <section id="aceitavel">
-        <h2>When is it acceptable</h2>
-        <p>Acceptable for internal use when <strong>all</strong> the conditions below are true:</p>
-        <ul>
-          <li>Each dev generates their own credential.</li>
-          <li>Each dev builds their own app (or receives an individual build).</li>
-          <li>The credential is per user or per device.</li>
-          <li>The SSH user is dedicated to the tunnel — never the primary account on the system.</li>
-          <li>O <code>sshd</code> restricts the forward with <code>PermitOpen</code> pointing only to the bridge loopback.</li>
-          <li>The bridge is only linked to the loopback.</li>
-          <li>The server host key is pinned or validated on the first pairing.</li>
-          <li>There is a simple revocation process.</li>
-          <li>The APK is not shared outside the team.</li>
-        </ul>
-      </section>
+      <section id="fronteira">
+        <h2>One boundary, and only one</h2>
+        <p>
+          Everything that reaches the bridge's address has full control of it. The authenticated WireGuard
+          peer plus the bind address <em>is</em> the security model — there is no second layer behind it.
+        </p>
 
-      <section id="risco">
-        <h2>When it becomes a serious risk</h2>
         <div class="callout callout--danger">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
           <div>
-            <ul style="margin:0">
-              <li>The same password/key is shared by multiple users.</li>
-              <li>The credential allows login to the dev's administrative or personal account.</li>
-              <li>O <code>sshd</code> allows wide forward to any host/port.</li>
-              <li>SSH is exposed to the internet with a weak password and no rate limit.</li>
-              <li>There is no rotation when a device or build leaks.</li>
-              <li>The app is distributed outside the internal team.</li>
-              <li>Secrets are committed to the repository.</li>
-            </ul>
+            <span class="callout__title">The bridge has no HTTP authentication</span>
+            <p>No token, no session, no pairing — and it replies with <code>Access-Control-Allow-Origin: *</code>. Two consequences follow, and both are easy to miss:</p>
+            <p><strong>Any process on the desktop</strong> can reach it. Binding to the tunnel address restricts access <em>over the network</em>, but that address is local to the host: a downloaded binary, a browser extension, a compromised npm package in an unrelated project — all have the same access your phone does.</p>
+            <p><strong>Any web page open on the phone</strong> can reach it while the tunnel is up, because the phone routes the host address through the tunnel for every app, browser included. With a wildcard CORS policy, JavaScript on an arbitrary site can call the API <em>and read the responses</em>.</p>
           </div>
         </div>
+
+        <p>
+          This is precisely what NIST's <strong>Zero Trust Architecture</strong> (SP 800-207) argues against:
+          network location should never imply authorization. The design here is a classic perimeter, with all
+          the power concentrated at the entrance.
+        </p>
       </section>
 
-      <section id="password-vs-key">
-        <h2>Password × private key</h2>
-        <div class="tabs">
-          <div class="tabs__nav">
-            <button class="tabs__btn active">Private key <span class="badge badge--user" style="margin-left:6px">favorite</span></button>
-            <button class="tabs__btn">Password</button>
-          </div>
-          <div class="tabs__panel active">
-            <ul>
-              <li>Allows you to revoke by device via <code>authorized_keys</code>.</li>
-              <li>With <code>PasswordAuthentication no</code>, eliminates brute force.</li>
-              <li>It remains extractable from the app if embedded — take care of storage.</li>
-            </ul>
-            <p><strong>Technical preference:</strong> key per device (or per dev) with <code>PasswordAuthentication no</code>.</p>
-          </div>
-          <div class="tabs__panel">
-            <ul>
-              <li>Simpler for manual builds and easier to rotate.</li>
-              <li>More subject to online attack if SSH is exposed without rate limit.</li>
-              <li>It does not allow revoking a device without changing that user's password.</li>
-            </ul>
-            <p>Option only accepted in the internal phase: password per dev in own build, with hardening and rotation.</p>
-          </div>
+      <section id="ganhos">
+        <h2>What the WireGuard design does fix</h2>
+        <p>The migration away from an SSH tunnel was not cosmetic. It closed a real class of problem:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Before (SSH tunnel)</th><th>Now (WireGuard)</th></tr></thead>
+            <tbody>
+              <tr><td>Private key embedded in the APK, extractable from the binary</td><td>No secret in the APK; the key is born on the device</td></tr>
+              <tr><td>Rotating a credential meant rebuilding and redistributing</td><td>Rotating is one line on the host</td></tr>
+              <tr><td>The exposed service announced its version to any scanner</td><td>No reply to packets without a valid key</td></tr>
+              <tr><td>Pre-auth surface: a full SSH implementation</td><td>Noise_IK handshake, no cipher negotiation, small codebase</td></tr>
+              <tr><td>Revocation meant editing a user's <code>authorized_keys</code></td><td>Revocation is deleting a <code>[Peer]</code> block, effective immediately</td></tr>
+            </tbody>
+          </table>
         </div>
+        <p>
+          Structurally, the model moved from <em>"shared secret shipped inside the client"</em> — the classic
+          <a href="https://cwe.mitre.org/data/definitions/798.html" target="_blank" rel="noopener">CWE-798</a>,
+          hard-coded credentials — to <em>one key pair per device</em>. Removing a class of problem beats
+          mitigating it.
+        </p>
       </section>
 
-      <section id="controles">
-        <h2>Mandatory controls</h2>
-        <p>The build config requires explicit confirmation and authentication mode declaration:</p>
-        <div class="code"><div class="code__bar"><span class="code__lang">build variables</span></div><pre><code>CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET=true
-CODEX_MOBILE_SSH_AUTH_MODE=private_key # or: password</code></pre></div>
-        <p>The app should show on the diagnostic screen that it is in <strong>internal profile with embedded credential</strong> — <em>without ever revealing the value</em>.</p>
+      <section id="lacunas">
+        <h2>Known gaps</h2>
+        <p>Stated plainly, so nobody has to discover them the hard way.</p>
+
+        <details class="acc" open>
+          <summary>No authentication on the API <span class="badge badge--admin">High</span> <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
+          <div class="acc__body">
+            <p>No route checks a credential, and CORS is wide open. Anything that can reach the address can list and add workspaces, read configuration, start Codex runs and answer approvals.</p>
+            <p><strong>Fix:</strong> a shared token compared in constant time, required on every <code>/v1/*</code> route; drop the wildcard CORS (a native client does not need CORS at all); validate the <code>Host</code> header against an allowlist.</p>
+            <p><strong>References:</strong> CWE-306, CWE-942 · OWASP API Security Top 10 <code>API2</code>, <code>API5</code> · OWASP ASVS V13.</p>
+          </div>
+        </details>
+
+        <details class="acc">
+          <summary>Filesystem browsing is not scoped <span class="badge badge--admin">High</span> <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
+          <div class="acc__body">
+            <p>The directory-browsing endpoints are not restricted to the workspace allowlist, and the workspace list can be widened through the API itself. Combined with the gap above, an unauthenticated caller can map the machine and then expand its own scope.</p>
+            <p><strong>Fix:</strong> scope browsing to permitted roots; make widening the allowlist require confirmation on the desktop rather than being a plain remote call.</p>
+            <p><strong>References:</strong> CWE-285, CWE-538 · OWASP API Security <code>API1</code> · least privilege (Saltzer &amp; Schroeder).</p>
+          </div>
+        </details>
+
+        <details class="acc">
+          <summary>No guard against a public bind <span class="badge badge--user">Medium</span> <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
+          <div class="acc__body">
+            <p>The default bind address is safe, but nothing rejects <code>0.0.0.0</code>. One stray environment variable — copied from another project, or misread from a document — publishes the whole API on the LAN, and with an IPv6 pinhole open, potentially further.</p>
+            <p><strong>Fix:</strong> refuse non-loopback, non-private addresses unless an explicit override variable is set, and log a warning on every non-loopback bind. This is a <em>fail-safe defaults</em> problem: the system relies on the operator not making a mistake instead of refusing the dangerous configuration.</p>
+            <p><strong>References:</strong> CWE-1188 · CIS Controls v8.1 Control 4 · CISA <em>Secure by Design</em>.</p>
+          </div>
+        </details>
+
+        <details class="acc">
+          <summary>Cleartext permission is app-wide <span class="badge badge--user">Low</span> <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
+          <div class="acc__body">
+            <p>Plain HTTP <em>inside</em> the tunnel is fine and defensible: WireGuard already provides confidentiality and authenticity, and TLS on top would be redundant encryption over an already authenticated channel. The problem is that <code>usesCleartextTraffic="true"</code> applies to the entire app, so a Bridge URL pointing outside the tunnel would also travel in the clear, silently.</p>
+            <p><strong>Fix:</strong> replace the blanket flag with a network security configuration that permits cleartext only for the tunnel subnet.</p>
+            <p><strong>References:</strong> OWASP MASVS <code>MASVS-NETWORK-1</code> · Android Network Security Configuration.</p>
+          </div>
+        </details>
+
+        <details class="acc">
+          <summary>No rate limiting, no audit trail <span class="badge badge--user">Low</span> <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
+          <div class="acc__body">
+            <p>Once a token exists, nothing throttles attempts against it. And there is no record of who called what, so "what ran, from which peer, when" is currently unanswerable.</p>
+            <p><strong>Fix:</strong> progressive backoff on authentication failures; structured audit logging with timestamp, source, route and result — and no prompt content in the logs.</p>
+            <p><strong>References:</strong> CWE-307, CWE-778 · CIS Controls v8.1 Control 8 · NIST CSF 2.0, <strong>Detect</strong> function.</p>
+          </div>
+        </details>
+
+        <details class="acc">
+          <summary>Debug keystore signing <span class="badge badge--user">Low internally</span> <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
+          <div class="acc__body">
+            <p>The release APK is signed with the repository's debug certificate, which is public and reproducible — anyone can build an APK Android will accept as a legitimate update of the same package. For one phone installed over USB this is theoretical. The moment the APK is distributed by any other means, it is not.</p>
+            <p><strong>Fix:</strong> a private release keystore before any distribution, stored outside the repository, with a backup.</p>
+          </div>
+        </details>
+
+        <details class="acc">
+          <summary>Leftovers from the SSH design <span class="badge badge--user">Medium</span> <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
+          <div class="acc__body">
+            <p>If you followed an earlier version of this guide: <code>sshd</code> is probably still installed, running and listening on all interfaces, and <strong>APKs built before the migration still contain the embedded key</strong> — they keep working until it is revoked.</p>
+            <p><strong>Fix, in order:</strong> remove the app's key from <code>authorized_keys</code> (this alone invalidates every old APK); then, if nothing else on the machine needs it, stop and disable <code>sshd</code> and close its router rule.</p>
+            <p><strong>References:</strong> MITRE ATT&amp;CK <code>T1133</code> External Remote Services, <code>T1078</code> Valid Accounts.</p>
+          </div>
+        </details>
       </section>
 
-      <section id="env-vars">
-        <h2>Use environment variables, not versioned files</h2>
-        <p>Secrets enter the build through the terminal environment and are read from local files — never typed into code or docs. Good practices in PowerShell:</p>
-        <div class="step">
-          <div class="step__n">1</div>
-          <div class="step__body">
-            <p><strong>Read the file key</strong>, don't paste it inline:</p>
-            <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--user">common</span></div><pre><code>$env:CODEX_MOBILE_SSH_PRIVATE_KEY_PEM = Get-Content "$env:USERPROFILE\.ssh\codex_mobile_rsa" -Raw</code></pre></div>
-          </div>
-        </div>
-        <div class="step">
-          <div class="step__n">2</div>
-          <div class="step__body">
-            <p><strong>Choose the right scope.</strong> Session variables (<code>$env:VAR</code>) disappear when closing the terminal — great for secrets. Just promote <em>User</em>/<em>machine</em> what is not sensitive (such as <code>JAVA_HOME</code>).</p>
-          </div>
-        </div>
-        <div class="step">
-          <div class="step__n">3</div>
-          <div class="step__body">
-            <p><strong>Clean</strong> sensitive variables when finishing the build:</p>
-            <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--user">common</span></div><pre><code>Remove-Item Env:\CODEX_MOBILE_SSH_PRIVATE_KEY_PEM -ErrorAction SilentlyContinue
-Remove-Item Env:\CODEX_MOBILE_SSH_PASSWORD -ErrorAction SilentlyContinue</code></pre></div>
-          </div>
-        </div>
-      </section>
+      <section id="plano">
+        <h2>Hardening plan</h2>
+        <p>Ordered by impact-to-effort, not by preference.</p>
+        <ol>
+          <li><strong>Close the authorization gap.</strong> Token on the bridge and in the app, wildcard CORS removed, <code>Host</code> validated, bind guard added, filesystem browsing scoped.</li>
+          <li><strong>Shrink the blast radius and gain visibility.</strong> Cleartext limited to the tunnel subnet, rate limiting, audit log, private release keystore, bridge running as a persistent service.</li>
+          <li><strong>Structural hardening.</strong> Retire <code>sshd</code>, per-peer preshared keys, QR-code pairing instead of a typed token, scheduled key rotation, periodic peer inventory review.</li>
+        </ol>
 
-      <section id="repo">
-        <h2>Repository Rules</h2>
-        <ul>
-          <li>Never commit <code>.env</code>, <code>.env.local</code>, keystores, private keys or passwords.</li>
-          <li>Keep a <code>.env.example</code> <strong>no real values</strong>.</li>
-          <li>Prefer injection via CI, local script or build parameter of the chosen stack.</li>
-          <li>Treat <strong>logs as sensitive</strong> — they can capture secrets unintentionally.</li>
-        </ul>
         <div class="callout callout--tip">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c.5.5 1 1.5 1 3h6c0-1.5.5-2.5 1-3a7 7 0 0 0-4-12z"/></svg>
-          <div><p>Add <code>.ssh/</code>, <code>*.pem</code>, <code>*.env</code> and the keystores folder to <code>.gitignore</code> before the first commit, and run a secrets scan before publishing any changes.</p></div>
+          <div>
+            <span class="callout__title">Why QR pairing instead of a typed token</span>
+            <p>Saltzer &amp; Schroeder called it <em>psychological acceptability</em>: a control with too much friction gets switched off by the very person it protects. A token you must retype on a phone keyboard is exactly that kind of control.</p>
+          </div>
         </div>
       </section>
 
-      <section id="rede-rotacao">
-        <h2>Network & Rotation</h2>
+      <section id="regras">
+        <h2>Rules that do not change</h2>
         <ul>
-          <li><strong>Only SSH crosses the network.</strong> The bridge remains in loopback; prefer VPN/overlay to opening ports on the router.</li>
-          <li><strong>Strong and unique passwords</strong> by dev, when there is a password.</li>
-          <li><strong>Rotate</strong> the credential when a device or build leaves the user's control.</li>
-          <li><strong>Host key pinout</strong> (or trust-on-first-use in peering) prevents fake servers.</li>
+          <li><strong>One key pair per device</strong>, one <code>/32</code> per peer. Never share a key between devices.</li>
+          <li><strong>Private keys never leave their machine.</strong> Not into a terminal, a document, a chat, or an issue. Generate them by redirecting into a file and restrict the ACL.</li>
+          <li><strong>Split tunnel.</strong> <code>AllowedIPs</code> on the device carries the host address only — never <code>0.0.0.0/0</code>.</li>
+          <li><strong>One entry port.</strong> UDP for WireGuard, and nothing else. <strong>Never</strong> forward the bridge port.</li>
+          <li><strong>The bridge never binds to a public address.</strong> Verify it on every start, not from memory.</li>
+          <li><strong>Nothing secret in the repository.</strong> No <code>.env</code>, keystores, keys or tokens. Treat logs as sensitive.</li>
+          <li><strong>Public keys are not secrets, but they are identifiers.</strong> Neither they, your public IPv6 address, your dynamic DNS name nor your external port belong in a public repository — that is target information, not design.</li>
         </ul>
+
         <div class="callout callout--note">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div><p>Embedded credentials increase maintenance: rotation usually requires rebuilding, and old builds remain valid until the credential is revoked on the server. Document where your key is and keep the revocation process handy.</p></div>
+          <div>
+            <p>That last rule is Kerckhoffs's principle applied honestly: a system must remain secure with its design public — which is why this guide exists — while the keys stay secret. Identifiers sit in between: publishing them buys nothing and costs exposure.</p>
+          </div>
         </div>
+      </section>
+
+      <section id="referencias">
+        <h2>Where to check your own work</h2>
+        <p>
+          You do not have to invent a security review. These organizations publish exactly the kind of
+          checklist and alert this project should be measured against.
+        </p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Acronym</th><th>Organization</th><th>What it gives you here</th></tr></thead>
+            <tbody>
+              <tr><td><strong>NIST</strong></td><td>National Institute of Standards and Technology (US)</td><td>CSF 2.0, SP 800-53 controls, and SP 800-207 on Zero Trust</td></tr>
+              <tr><td><strong>CISA</strong></td><td>Cybersecurity and Infrastructure Security Agency (US)</td><td>The <em>KEV</em> catalog of actually-exploited flaws, and the <em>Secure by Design</em> guidance</td></tr>
+              <tr><td><strong>NSA</strong></td><td>National Security Agency (US)</td><td>Joint guidance on selecting and hardening remote-access VPNs</td></tr>
+              <tr><td><strong>OWASP</strong></td><td>Open Worldwide Application Security Project</td><td>ASVS, MASVS/MASTG for mobile, API Security Top 10, Cheat Sheets</td></tr>
+              <tr><td><strong>MITRE</strong></td><td>MITRE Corporation</td><td>ATT&amp;CK for adversary techniques, CWE for weakness classes, CVE</td></tr>
+              <tr><td><strong>CIS</strong></td><td>Center for Internet Security</td><td>CIS Controls v8.1 and hardening Benchmarks, including Windows</td></tr>
+              <tr><td><strong>FIRST</strong></td><td>Forum of Incident Response and Security Teams</td><td>CVSS for severity, EPSS for exploitation likelihood</td></tr>
+              <tr><td><strong>IETF</strong></td><td>Internet Engineering Task Force</td><td>The RFCs — the normative source for anything protocol-shaped</td></tr>
+              <tr><td><strong>ENISA</strong></td><td>EU Agency for Cybersecurity</td><td>Annual Threat Landscape reports</td></tr>
+              <tr><td><strong>NCSC</strong></td><td>National Cyber Security Centre (UK)</td><td>Practical, readable guidance for remote work setups</td></tr>
+              <tr><td><strong>CERT/CC</strong></td><td>CERT Coordination Center, Carnegie Mellon</td><td>Coordinated vulnerability disclosure</td></tr>
+              <tr><td><strong>CERT.br</strong></td><td>Brazilian national CERT, part of NIC.br</td><td>Regional alerts and recommendations; <code>ipv6.br</code> for IPv6 deployment</td></tr>
+              <tr><td><strong>SANS / ISC</strong></td><td>SANS Institute Internet Storm Center</td><td>What is being scanned on the internet right now</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout--tip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c.5.5 1 1.5 1 3h6c0-1.5.5-2.5 1-3a7 7 0 0 0-4-12z"/></svg>
+          <div>
+            <span class="callout__title">If you only follow two</span>
+            <p>Track <strong>CISA's KEV catalog</strong> and the <strong>SANS Internet Storm Center</strong>. Both answer "does this affect me today?", which is a different and more useful question than "is this theoretically insecure?".</p>
+          </div>
+        </div>
+
+        <h3 id="leitura">Worth reading</h3>
+        <ul>
+          <li>
+            <strong>Saltzer &amp; Schroeder</strong>, <em>The Protection of Information in Computer Systems</em> (1975).
+            Fifty years old and still the best checklist there is. Three of their eight principles name the gaps
+            on this page exactly: <em>complete mediation</em> (check every request, not just the ones from outside),
+            <em>fail-safe defaults</em> (deny by default), and <em>least privilege</em>.
+          </li>
+          <li>
+            <strong>Ross Anderson</strong>, <em>Security Engineering</em>, 3rd edition — freely available from the author.
+            The chapters on access control and the economics of security explain why gaps like these are so common:
+            it is rarely ignorance, it is sequencing.
+          </li>
+          <li>
+            <strong>Adam Shostack</strong>, <em>Threat Modeling: Designing for Security</em>. The STRIDE method is the
+            cheapest way to produce the asset table at the top of this page without relying on intuition.
+          </li>
+          <li>
+            <strong>Gilman &amp; Barth</strong>, <em>Zero Trust Networks</em> (O'Reilly). The implementable version of
+            SP 800-207, and it addresses this exact trap: "I have a VPN, therefore I am secure."
+          </li>
+          <li>
+            <strong>Jason A. Donenfeld</strong>, <em>WireGuard: Next Generation Kernel Network Tunnel</em> (NDSS 2017).
+            The protocol whitepaper — why there is no cipher negotiation, and why invalid packets get no reply.
+            <a href="https://www.wireguard.com/papers/wireguard.pdf" target="_blank" rel="noopener">wireguard.com/papers</a>
+          </li>
+          <li>
+            <strong>Bruce Schneier</strong>, on attack trees and the observation that security is a process, not a product.
+            The practical consequence: a security page that is never revisited stops being true.
+          </li>
+        </ul>
       </section>
 
       <div class="pager">

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Architecture · Codex Mobile</title>
-  <meta name="description" content="Architecture decisions for Codex Mobile: desktop trust boundary, SSH tunnel as the network boundary, and SSE streaming." />
+  <meta name="description" content="Architecture decisions for Codex Mobile: desktop trust boundary, WireGuard as the network boundary, and SSE streaming." />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2310a37f'/></svg>" />
 </head>
@@ -19,7 +19,7 @@
     <nav class="topnav">
       <a href="01-architecture.html" class="active">Architecture</a>
       <a href="02-prerequisites.html">Prerequisites</a>
-      <a href="03-ssh-setup.html">SSH</a>
+      <a href="03-wireguard-setup.html">VPN</a>
       <a href="04-build-run.html">Build</a>
       <a href="05-security.html">Security</a>
     </nav>
@@ -36,7 +36,7 @@
         <a href="index.html"><span class="num">★</span> Overview</a>
         <a href="01-architecture.html" class="active"><span class="num">1</span> Architecture</a>
         <a href="02-prerequisites.html"><span class="num">2</span> Prerequisites</a>
-        <a href="03-ssh-setup.html"><span class="num">3</span> SSH Tunnel</a>
+        <a href="03-wireguard-setup.html"><span class="num">3</span> WireGuard VPN</a>
         <a href="04-build-run.html"><span class="num">4</span> Build & Run</a>
         <a href="05-security.html"><span class="num">5</span> Security</a>
         <a href="06-troubleshooting.html"><span class="num">6</span> Troubleshooting</a>
@@ -66,7 +66,7 @@
         <p>Everything sensitive remains on the desktop. The phone never receives credentials from OpenAI.</p>
         <div class="cards">
           <div class="card"><h3>Stays on the desktop</h3><p>Codex CLI, OpenAI login and credentials, local workspace, shell/filesystem permissions and the bridge that translates commands.</p></div>
-          <div class="card"><h3>Stay on mobile</h3><p>Operation UI, the local end of the SSH tunnel, non-sensitive preferences, and — in internal profile — the built-in SSH credential.</p></div>
+          <div class="card"><h3>Stay on mobile</h3><p>Operation UI, non-sensitive preferences, and the WireGuard private key — generated on the device by the WireGuard app, never by this project.</p></div>
         </div>
 
         <h3 id="fora-de-escopo">Out of scope</h3>
@@ -81,20 +81,20 @@
       <section id="desenho">
         <h2>Target drawing</h2>
         <p>
-          HTTP traffic between the app and the bridge travels via <code>127.0.0.1</code> in the <strong>two ends</strong>
-          of the tunnel. The only remotely reachable service is SSH; HTTP never touches the internet.
+          HTTP traffic between the app and the bridge travels inside a private network that exists only between
+          key-authenticated peers. The only remotely reachable service is WireGuard; HTTP never touches the internet.
         </p>
 
         <div class="diagram">
           <div class="node accent"><div class="t">Mobile UI</div><div class="s">Android app, operation client</div></div>
           <div class="arrow"><svg width="16" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
-          <div class="node"><div class="t">HTTP/SSE in loopback</div><div class="s">on your cell phone (<code>127.0.0.1</code>)</div></div>
-          <div class="arrow"><span>SSH tunnel built into the app</span></div>
+          <div class="node"><div class="t">HTTP/SSE over the tunnel</div><div class="s">to the host's private address</div></div>
+          <div class="arrow"><span>WireGuard, managed by the OS — not by the app</span></div>
           <div class="boundary">
             <span class="boundary__tag">Desktop · trust boundary</span>
-            <div class="node"><div class="t">sshd</div><div class="s">only service reachable from outside</div></div>
+            <div class="node"><div class="t">WireGuard interface</div><div class="s">only service reachable from outside</div></div>
             <div class="arrow"><svg width="16" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
-            <div class="node accent"><div class="t">Codex Bridge</div><div class="s">linked only to loopback</div></div>
+            <div class="node accent"><div class="t">Codex Bridge</div><div class="s">bound only to the tunnel address</div></div>
             <div class="arrow"><svg width="16" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
             <div class="node"><div class="t">@openai/codex-sdk · app-server · exec</div><div class="s">internal runtime (interchangeable)</div></div>
             <div class="arrow"><svg width="16" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
@@ -108,19 +108,28 @@
         </div>
       </section>
 
-      <section id="por-que-ssh">
-        <h2>Why an SSH Tunnel</h2>
-        <p>The tunnel pattern solves both the remote access and the attack surface at once:</p>
+      <section id="por-que-vpn">
+        <h2>Why a VPN</h2>
+        <p>The tunnel pattern solves remote access and attack surface at once:</p>
         <ul>
-          <li><strong>No HTTP on the internet.</strong> Bridge is never published; it only listens to the desktop loopback.</li>
-          <li><strong>It works on 5G.</strong> As long as there is a valid SSH route to the machine, the app dials the SSH endpoint and the local forward delivers the HTTP as if it were local.</li>
-          <li><strong>Loopback on both ends.</strong> On your cell phone, the app talks to <code>127.0.0.1</code>; on the desktop the bridge responds in <code>127.0.0.1</code>. The tunnel is the only thing in between.</li>
-          <li><strong>Minimum surface.</strong> With <code>PermitOpen</code> restricted, the app's credential can only forward to the bridge port — and nothing else.</li>
+          <li><strong>No HTTP on the internet.</strong> The bridge is never published; it binds only to its address inside the private network.</li>
+          <li><strong>It works on mobile data.</strong> As long as there is a reachable endpoint for the desktop, the phone completes a handshake and the private address becomes routable — from anywhere.</li>
+          <li><strong>Nothing to extract from the APK.</strong> The device's private key is generated by the WireGuard app and never leaves the phone. The build carries no credential at all.</li>
+          <li><strong>Silent to scanners.</strong> WireGuard does not answer packets that carry no valid key. From outside, the port is indistinguishable from a closed one.</li>
+          <li><strong>Minimum surface.</strong> One UDP port, a split route that carries only the host address, and no NAT or forwarding rules to get wrong.</li>
         </ul>
 
         <div class="callout callout--tip">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c.5.5 1 1.5 1 3h6c0-1.5.5-2.5 1-3a7 7 0 0 0-4-12z"/></svg>
-          <div><p>In 5G, <strong>the bridge does not change address</strong>. The app continues talking to the local loopback — only the SSH endpoint used underneath the tunnel changes.</p></div>
+          <div><p>On mobile data, <strong>the bridge does not change address</strong>. The app keeps talking to the same private address — only the WireGuard endpoint underneath changes.</p></div>
+        </div>
+
+        <div class="callout callout--note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <div>
+            <span class="callout__title">This replaced an SSH tunnel</span>
+            <p>Earlier versions of this guide used an SSH local port forward with a credential embedded in the APK. It was replaced because CGNAT makes IPv6 the only viable way in, and over IPv6 an extractable credential plus a service that announces its version is the wrong pair of properties to expose. <a href="03-wireguard-setup.html#por-que">Chapter 3</a> has the full comparison.</p>
+          </div>
         </div>
       </section>
 
@@ -132,12 +141,12 @@
             <thead><tr><th>Mode</th><th>What is it for</th></tr></thead>
             <tbody>
               <tr><td><code>mock</code></td><td>UI development without real backend.</td></tr>
-              <tr><td><code>http</code></td><td>Direct local access during development.</td></tr>
-              <tr><td><code>ssh_tunnel</code></td><td>Real in-house production mode — what this guide sets up.</td></tr>
+              <tr><td><code>http</code></td><td>Direct HTTP — over the tunnel in real use, over loopback in development. <strong>What this guide sets up.</strong></td></tr>
+              <tr><td><code>ssh_tunnel</code></td><td>Legacy. Still in the codebase, outside the supported path.</td></tr>
             </tbody>
           </table>
         </div>
-        <p>The client also inherits mature operational standards: IPv4/IPv6 endpoint fallback, periodic health check, reconnection with backoff and short diagnostic logs.</p>
+        <p>The client also keeps mature operational standards: periodic health check, reconnection with backoff and short diagnostic logs. With <code>http</code>, <code>ensureTransportReady</code> resolves immediately — there is no transport for the app to bring up, because the OS already did it.</p>
       </section>
 
       <section id="sse">
@@ -172,11 +181,11 @@
           <summary>Mobile App <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
           <div class="acc__body">
             <ul>
-              <li>Keep a <em>local port forward</em> SSH.</li>
-              <li>View shipping status.</li>
-              <li>Consume HTTP/SSE from the bridge; send prompts, cancellations and approvals.</li>
+              <li>Consume HTTP/SSE from the bridge over the tunnel address.</li>
+              <li>View transport status.</li>
+              <li>Send prompts, cancellations and approvals.</li>
               <li>Persist non-sensitive local preferences.</li>
-              <li>Store/embed the SSH credential according to the chosen internal profile.</li>
+              <li><strong>Not</strong> manage the tunnel. That belongs to the WireGuard app, outside this project — which is why the build carries no secret.</li>
             </ul>
           </div>
         </details>
@@ -185,7 +194,7 @@
           <summary>Codex Bridge <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
           <div class="acc__body">
             <ul>
-              <li>Run locally and link <strong>only</strong> to loopback.</li>
+              <li>Run locally and bind <strong>only</strong> to the tunnel address — never <code>0.0.0.0</code>.</li>
               <li>Normalize a stable HTTP/SSE API for mobile.</li>
               <li>Encapsulate differences between Codex SDK, <code>app-server</code> and <code>exec</code>.</li>
               <li>Control cancellation, heartbeats and thread history.</li>
@@ -210,11 +219,22 @@
       <section id="confianca">
         <h2>Trust Model</h2>
         <p>
-          Mobile is only trusted as an internal client. It does not receive OpenAI credentials. The loss of
-          phone or APK can compromise the built-in SSH credential, but <strong>no</strong> must open access
-          broad if sshd is restricted to a dedicated user and a <code>PermitOpen</code> pointing only
-          for bridge loopback. Details of this hardening are in the
-          <a href="03-ssh-setup.html">SSH tunnel chapter</a> and in <a href="05-security.html">security page</a>.
+          Mobile is only trusted as an internal client. It receives no OpenAI credentials and, in this design,
+          carries no secret from this project at all. Losing the phone exposes its WireGuard private key — protected
+          by the screen lock and the Android keystore — and revoking it is immediate and unilateral from the host.
+        </p>
+
+        <div class="callout callout--warn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          <div>
+            <span class="callout__title">Know the boundary you are relying on</span>
+            <p>The cryptographic boundary is currently the <strong>only</strong> boundary. The bridge has no HTTP authentication, so anything that reaches its address — including any process on the desktop itself — has full control. Read the <a href="05-security.html">security chapter</a> before deciding this is acceptable for your situation.</p>
+          </div>
+        </div>
+
+        <p>
+          Setup details are in the <a href="03-wireguard-setup.html">WireGuard chapter</a>; the full threat picture is on the
+          <a href="05-security.html">security page</a>.
         </p>
       </section>
 
