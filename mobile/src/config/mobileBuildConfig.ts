@@ -202,7 +202,7 @@ function parseGatewayMode(value: string | null): GatewayMode {
   if (value === "mock" || value === "http" || value === "ssh_tunnel") {
     return value;
   }
-  return "ssh_tunnel";
+  return "http";
 }
 
 function parseAuthMode(value: string | null): SshAuthMode | null {

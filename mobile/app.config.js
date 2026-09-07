@@ -21,7 +21,7 @@ module.exports = ({ config }) => {
       ...(config.extra ?? {}),
       ...(base.expo.extra ?? {}),
       codexMobile: {
-        gateway: withDefault("CODEX_MOBILE_GATEWAY", "ssh_tunnel"),
+        gateway: withDefault("CODEX_MOBILE_GATEWAY", "http"),
         apiBaseUrl: withDefault("CODEX_MOBILE_API_BASE_URL", "http://127.0.0.1:8787"),
         sshTunnelLocalUrl: withDefault(
           "CODEX_MOBILE_SSH_TUNNEL_LOCAL_URL",

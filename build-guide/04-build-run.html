@@ -130,9 +130,9 @@ $env:CODEX_MOBILE_API_BASE_URL = "http://&lt;HOST_TUNNEL_ADDRESS&gt;:&lt;BRIDGE_
         <div class="callout callout--note">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
           <div>
-            <span class="callout__title">Legacy defaults still exist in the repo</span>
-            <p><code>mobile/app.config.js</code>, <code>mobile/eas.json</code> and the fallback in <code>parseGatewayMode</code> still default to <code>ssh_tunnel</code>. The first one matters: if the variable does not reach the build process — file not loaded, wrong terminal, variable cleared — the config falls back to <code>ssh_tunnel</code> <strong>silently</strong>, and the APK ships with the old gateway and no error anywhere.</p>
-            <p>That is why the <code>Gateway: http</code> check in step 7 is not a formality. It is the only place the mistake becomes visible.</p>
+            <span class="callout__title">If the variable does not reach the build</span>
+            <p>Both defaults — <code>mobile/app.config.js</code> and the fallback in <code>parseGatewayMode</code> — now resolve to <code>http</code>, so a missing variable produces the right gateway rather than the old one.</p>
+            <p><code>mobile/eas.json</code> is the exception: its profiles still set <code>ssh_tunnel</code> <em>explicitly</em>, so an EAS build would still ship the old gateway. Local Gradle builds do not read it. Checking <code>Gateway: http</code> in step 7 is still the cheapest way to be sure.</p>
           </div>
         </div>
       </section>

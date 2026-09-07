@@ -80,13 +80,15 @@ O gateway `ssh_tunnel`, o `SshTunnelManager` e o modulo nativo
 `modules/codex-ssh-tunnel` continuam no codigo mas estao fora do caminho
 suportado. Com `gateway=http` nada disso e executado.
 
-Tres defaults ainda apontam para `ssh_tunnel` e serao removidos numa limpeza
-dedicada: `app.config.js`, os perfis de `eas.json` e o fallback de
-`parseGatewayMode`. O primeiro e o que importa no dia a dia — se
-`CODEX_MOBILE_GATEWAY` nao chegar ao processo do build, o `app.config.js` cai em
-`ssh_tunnel` **em silencio** e o APK sai com o gateway antigo sem nenhum erro.
-Confira `Gateway: http` em Settings depois de instalar. O build local nao usa
-`eas.json`.
+Os defaults de `app.config.js` e de `parseGatewayMode` ja resolvem para `http`,
+entao a ausencia de `CODEX_MOBILE_GATEWAY` produz o gateway certo.
+
+Os perfis de `eas.json` ainda definem `ssh_tunnel` **explicitamente** e serao
+tratados na limpeza dedicada; o build local por Gradle nao le esse arquivo.
+
+O modulo nativo continua sendo compilado em todo APK por autolinking do Expo,
+junto com o JSch. Nao e executado: o carregamento e `import()` dinamico dentro
+de `ensureReady()`, que so roda com `gateway=ssh_tunnel`.
 
 ## Scripts
 
