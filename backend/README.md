@@ -107,7 +107,7 @@ Apps, skills e MCP
 Aprovacoes e setup
 
 - `POST /v1/approvals/:approvalId/respond`
-- `GET /v1/setup/ssh/status` (legado, do desenho com tunnel SSH)
+- `GET /v1/setup/status`
 
 Rotas que dependem de capability (models, config, account, features, apps, skills, MCP, aprovacoes, rename) retornam erro quando o runtime ativo nao as suporta. Consulte `GET /v1/capabilities` para descobrir o que esta disponivel.
 

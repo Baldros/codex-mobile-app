@@ -361,14 +361,12 @@ async function routeRequest(
     return;
   }
 
-  if (method === "GET" && pathname === "/v1/setup/ssh/status") {
+  if (method === "GET" && pathname === "/v1/setup/status") {
     sendJson(res, 200, {
       mode: "bridge",
-      local_url: `http://${config.host}:${config.port}`,
-      remote_api: `${config.host}:${config.port}`,
-      connected: true,
-      last_health_check_ms: null,
-      active_endpoint: null
+      bridge_url: `http://${config.host}:${config.port}`,
+      bind_host: config.host,
+      bind_port: config.port
     });
     return;
   }

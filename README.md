@@ -208,9 +208,10 @@ The short version is:
 4. Build the native Android project and release APK.
 5. Install the APK and validate on Wi-Fi and mobile data.
 
-An APK built with the older `ssh_tunnel` gateway works over the VPN without a
-rebuild: saving a Bridge URL different from the embedded tunnel URL disables the
-embedded tunnel and the app falls back to plain HTTP.
+An APK predating the SSH removal also works over the VPN without a rebuild:
+saving a Bridge URL different from the embedded tunnel URL disabled the embedded
+tunnel and the app fell back to plain HTTP. Current builds have no embedded
+tunnel at all.
 
 ## Workspaces
 
@@ -274,6 +275,9 @@ chat, Markdown rendering, activity/tool timeline, human-in-the-loop approvals,
 cancellation, model and reasoning controls, account limits, execution presets,
 apps/skills/MCP navigation, and settings.
 
+The legacy SSH transport has been removed from the codebase: no native module,
+no `CODEX_MOBILE_SSH_*` variables, no credential of any kind in the APK.
+
 The main remaining work is application-layer authorization on the bridge —
-currently absent by an explicit, time-boxed decision — plus persistence of the
-bridge as a service and cleanup of the legacy SSH transport code.
+currently absent by an explicit, time-boxed decision — plus running the bridge
+as a persistent service.

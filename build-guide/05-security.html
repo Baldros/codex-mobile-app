@@ -183,6 +183,7 @@
           <div class="acc__body">
             <p>If you followed an earlier version of this guide: <code>sshd</code> is probably still installed, running and listening on all interfaces, and <strong>APKs built before the migration still contain the embedded key</strong> — they keep working until it is revoked.</p>
             <p><strong>Fix, in order:</strong> remove the app's key from <code>authorized_keys</code> (this alone invalidates every old APK); then, if nothing else on the machine needs it, stop and disable <code>sshd</code> and close its router rule.</p>
+            <p>The repository side is already done: the SSH transport, its native module and every SSH build variable have been removed, so current builds contain no credential to revoke. What remains is host state you have to clean up yourself.</p>
             <p><strong>References:</strong> MITRE ATT&amp;CK <code>T1133</code> External Remote Services, <code>T1078</code> Valid Accounts.</p>
           </div>
         </details>

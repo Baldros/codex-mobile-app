@@ -131,8 +131,7 @@ $env:CODEX_MOBILE_API_BASE_URL = "http://&lt;HOST_TUNNEL_ADDRESS&gt;:&lt;BRIDGE_
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
           <div>
             <span class="callout__title">If the variable does not reach the build</span>
-            <p>Both defaults — <code>mobile/app.config.js</code> and the fallback in <code>parseGatewayMode</code> — now resolve to <code>http</code>, so a missing variable produces the right gateway rather than the old one.</p>
-            <p><code>mobile/eas.json</code> is the exception: its profiles still set <code>ssh_tunnel</code> <em>explicitly</em>, so an EAS build would still ship the old gateway. Local Gradle builds do not read it. Checking <code>Gateway: http</code> in step 7 is still the cheapest way to be sure.</p>
+            <p>Every default now resolves to <code>http</code> — <code>app.config.js</code>, the parser fallback, and the <code>eas.json</code> profiles. A missing variable produces the right gateway; only the bridge URL would fall back to loopback, which the <strong>Build</strong> section in step 7 makes visible.</p>
           </div>
         </div>
       </section>
@@ -214,7 +213,7 @@ adb install -r .\app\build\outputs\apk\release\app-release.apk</code></pre></div
 
         <div class="callout callout--note">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div><p>The "Tunnel build" diagnostics block (Local URL, SSH user, Active endpoint) is empty with <code>gateway = http</code>. That is expected — there is no embedded tunnel to report on.</p></div>
+          <div><p>The <strong>Build</strong> section reports the gateway, the URL compiled into the APK, and any <code>EXPO_PUBLIC_BRIDGE_URL</code> override. The old "Tunnel build" panel was removed along with the SSH transport.</p></div>
         </div>
 
         <div class="callout callout--warn">
@@ -222,7 +221,7 @@ adb install -r .\app\build\outputs\apk\release\app-release.apk</code></pre></div
           <div>
             <span class="callout__title">If the Bridge field shows an old address</span>
             <p><code>adb install -r</code> preserves the app's stored preferences, and <strong>the saved URL wins over the build-time default</strong>. Fix it in <strong>Settings → Bridge → Save URL</strong> rather than clearing app data, which also wipes everything else.</p>
-            <p>Useful side effect: an APK built with the old <code>ssh_tunnel</code> gateway works over the VPN with no rebuild. Saving a URL different from the embedded tunnel URL disables the embedded tunnel and the app falls back to plain HTTP.</p>
+            <p>An APK predating the SSH removal also works over the VPN with no rebuild: in that build, saving a URL different from the embedded tunnel URL disabled the embedded tunnel and the app fell back to plain HTTP. Current builds have no embedded tunnel to disable.</p>
           </div>
         </div>
       </section>

@@ -74,21 +74,12 @@ chave embutida no build.
 A URL salva em Settings tem precedencia sobre o default de build, e sobrevive a
 `adb install -r`.
 
-### Legado SSH
+Os gateways suportados sao `http` (padrao) e `mock`. Qualquer outro valor cai em
+`http`.
 
-O gateway `ssh_tunnel`, o `SshTunnelManager` e o modulo nativo
-`modules/codex-ssh-tunnel` continuam no codigo mas estao fora do caminho
-suportado. Com `gateway=http` nada disso e executado.
-
-Os defaults de `app.config.js` e de `parseGatewayMode` ja resolvem para `http`,
-entao a ausencia de `CODEX_MOBILE_GATEWAY` produz o gateway certo.
-
-Os perfis de `eas.json` ainda definem `ssh_tunnel` **explicitamente** e serao
-tratados na limpeza dedicada; o build local por Gradle nao le esse arquivo.
-
-O modulo nativo continua sendo compilado em todo APK por autolinking do Expo,
-junto com o JSch. Nao e executado: o carregamento e `import()` dinamico dentro
-de `ensureReady()`, que so roda com `gateway=ssh_tunnel`.
+O transporte SSH foi removido do projeto: nao existem mais `SshTunnelManager`,
+`modules/codex-ssh-tunnel` nem variaveis `CODEX_MOBILE_SSH_*`. O APK deixou de
+embarcar o modulo nativo e a dependencia JSch.
 
 ## Scripts
 
@@ -119,5 +110,3 @@ npm run web
 - `src/domain/`: tipos e logica de dominio (tipos do bridge, mentions, partes de mensagem, parsing de historico, opcoes do composer).
 - `src/api/`: cliente HTTP/SSE.
 - `src/config/`, `src/storage/`, `src/theme/`, `src/utils/`: build config, preferencias, tema e utilidades.
-- `src/transport/` e `modules/codex-ssh-tunnel/`: manager e modulo nativo do
-  tunnel SSH. Legado, sem uso no gateway `http`.

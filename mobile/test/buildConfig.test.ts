@@ -1,59 +1,48 @@
 import {
   parseCodexMobileBuildConfig,
-  parseEndpointCandidates,
-  resolveDefaultBridgeUrl,
-  validateSshTunnelBuildConfig
+  resolveDefaultBridgeUrl
 } from "../src/config/mobileBuildConfig";
 
 describe("mobile build config", () => {
-  it("parses ordered SSH endpoint candidates", () => {
-    expect(
-      parseEndpointCandidates("[2804:14d:5ca0:46e7::761]:22,186.205.17.7:39223,bare-host")
-    ).toEqual([
-      {
-        host: "2804:14d:5ca0:46e7::761",
-        port: 22,
-        displayValue: "[2804:14d:5ca0:46e7::761]:22"
-      },
-      {
-        host: "186.205.17.7",
-        port: 39223,
-        displayValue: "186.205.17.7:39223"
-      },
-      {
-        host: "bare-host",
-        port: 22,
-        displayValue: "bare-host:22"
-      }
-    ]);
+  it("defaults to the http gateway and the loopback bridge", () => {
+    const config = parseCodexMobileBuildConfig({});
+
+    expect(config.gateway).toBe("http");
+    expect(config.apiBaseUrl).toBe("http://127.0.0.1:8787");
+    expect(config.bridgeUrlOverride).toBeNull();
   });
 
-  it("uses tunnel URL for native ssh_tunnel builds", () => {
+  it("falls back to http for unknown gateway values", () => {
+    expect(parseCodexMobileBuildConfig({ gateway: "ssh_tunnel" }).gateway).toBe("http");
+    expect(parseCodexMobileBuildConfig({ gateway: "" }).gateway).toBe("http");
+    expect(parseCodexMobileBuildConfig({ gateway: "mock" }).gateway).toBe("mock");
+  });
+
+  it("uses the configured bridge URL", () => {
     const config = parseCodexMobileBuildConfig({
-      gateway: "ssh_tunnel",
-      sshTunnelLocalUrl: "http://127.0.0.1:18080",
-      apiBaseUrl: "http://127.0.0.1:8787"
+      gateway: "http",
+      apiBaseUrl: "http://10.77.77.1:8787"
     });
 
-    expect(resolveDefaultBridgeUrl("android", config)).toBe("http://127.0.0.1:18080");
-    expect(resolveDefaultBridgeUrl("web", config)).toBe("http://127.0.0.1:8787");
+    expect(resolveDefaultBridgeUrl(config)).toBe("http://10.77.77.1:8787");
   });
 
-  it("validates required SSH tunnel build inputs", () => {
-    const missing = parseCodexMobileBuildConfig({
-      gateway: "ssh_tunnel"
+  it("lets an explicit override win over the build default", () => {
+    const config = parseCodexMobileBuildConfig({
+      apiBaseUrl: "http://10.77.77.1:8787",
+      bridgeUrlOverride: "http://127.0.0.1:8787"
     });
-    expect(validateSshTunnelBuildConfig(missing)).toBe(
-      "CODEX_MOBILE_SSH_REMOTE_HOSTS is not configured."
-    );
 
-    const ready = parseCodexMobileBuildConfig({
-      gateway: "ssh_tunnel",
-      sshRemoteHosts: "186.205.17.7:39223",
-      sshUsername: "codex_mobile",
-      sshPassword: "secret",
-      allowEmbeddedSshSecret: "true"
+    expect(resolveDefaultBridgeUrl(config)).toBe("http://127.0.0.1:8787");
+  });
+
+  it("ignores blank values", () => {
+    const config = parseCodexMobileBuildConfig({
+      apiBaseUrl: "   ",
+      bridgeUrlOverride: ""
     });
-    expect(validateSshTunnelBuildConfig(ready)).toBeNull();
+
+    expect(config.apiBaseUrl).toBe("http://127.0.0.1:8787");
+    expect(config.bridgeUrlOverride).toBeNull();
   });
 });
