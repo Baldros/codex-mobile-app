@@ -93,7 +93,7 @@ export type ThreadArchiveResponse = {
   thread?: BridgeThread | null;
 };
 
-export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type ApprovalPolicy = "never" | "on-request" | "on-failure" | "untrusted";
 export type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 

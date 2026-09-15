@@ -1,7 +1,7 @@
 import path from "node:path";
 import { z } from "zod";
 
-const RuntimeSchema = z.enum(["app-server", "sdk", "mock"]);
+const RuntimeSchema = z.enum(["app-server", "sdk"]);
 
 const EnvSchema = z.object({
   CODEX_BRIDGE_HOST: z.string().default("127.0.0.1"),

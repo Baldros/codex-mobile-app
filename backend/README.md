@@ -2,6 +2,8 @@
 
 Backend local do app mobile. Ele expoe uma API HTTP/SSE em loopback e encapsula o runtime real do Codex.
 
+Requer Node.js 22.12.0 ou mais recente. A CI usa Node.js 24.
+
 ## Comandos
 
 ```powershell
@@ -20,23 +22,23 @@ cria uma conversa real no historico nativo do Codex e confere o `cwd` da sessao.
 - `src/server.ts`: entrypoint do processo.
 - `src/app.ts`: roteador HTTP/SSE (cria o servidor e despacha cada rota).
 - `src/appServer/`: runtime `app-server` (cliente JSON-RPC via stdio e mapeamento de eventos).
-- `src/runtime/`: runtimes `sdk` e `mock` e o mapeamento de eventos do SDK.
+- `src/runtime/`: adapter `sdk` e o mapeamento de eventos do SDK.
+- `test/support/`: doubles isolados usados somente pela suite de testes.
 - `src/runs/`: registro de runs ativos, replay e reanexacao de eventos (`RunRegistry`).
 - `src/threads/`: servico e store de conversas.
 - `src/workspaces/`: allowlist de workspaces.
 
 ## Runtime
 
-O bridge suporta tres runtimes:
+O bridge suporta dois runtimes:
 
 - `app-server`: usa `codex app-server` via stdio JSON-RPC. Este e o runtime recomendado para historico nativo, settings e human-in-the-loop.
 - `sdk`: usa `@openai/codex-sdk` e o Codex CLI local. Continua disponivel como adapter simples.
-- `mock`: runtime deterministico para testes e desenvolvimento sem chamar Codex.
 
 Configure com:
 
 ```powershell
-$env:CODEX_BRIDGE_RUNTIME="mock"
+$env:CODEX_BRIDGE_RUNTIME="app-server"
 npm run dev
 ```
 
