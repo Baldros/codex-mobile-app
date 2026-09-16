@@ -9,7 +9,7 @@ import type { CodexModel } from "../src/domain/bridge";
 
 describe("composer option helpers", () => {
   it("falls back to standard reasoning efforts when the model omits them", () => {
-    expect(effortsForModel(null)).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(effortsForModel(null)).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
   });
 
   it("uses model-provided reasoning efforts when available", () => {

@@ -34,7 +34,13 @@ export function mapRuntimeEvent(event: RuntimeThreadEvent, context: RuntimeEvent
             thread_id: context.threadId,
             run_id: context.runId,
             status: "completed",
-            usage: event.usage
+            usage: {
+              input_tokens: event.usage.input_tokens,
+              cached_input_tokens: event.usage.cached_input_tokens,
+              cache_write_input_tokens: event.usage.cache_write_input_tokens,
+              output_tokens: event.usage.output_tokens,
+              reasoning_output_tokens: event.usage.reasoning_output_tokens
+            }
           }
         }
       ];

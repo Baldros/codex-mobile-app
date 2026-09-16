@@ -31,7 +31,9 @@ export const RunStreamBodySchema = z.object({
   approval_policy: z.enum(["never", "on-request", "on-failure", "untrusted"]).optional(),
   sandbox_mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
   model: z.string().trim().min(1).optional(),
-  model_reasoning_effort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+  model_reasoning_effort: z
+    .enum(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"])
+    .optional(),
   service_tier: z.string().trim().min(1).optional(),
   skip_git_repo_check: z.boolean().optional(),
   network_access_enabled: z.boolean().optional(),

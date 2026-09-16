@@ -7,23 +7,23 @@ import type {
   RuntimeThreadEvent,
   RuntimeThreadOptions,
   RuntimeTurnOptions
-} from "./types.js";
+} from "../../src/runtime/types.js";
 
-export type MockCodexRuntimeOptions = {
+export type FakeCodexRuntimeOptions = {
   delayMs?: number;
 };
 
-export class MockCodexRuntime implements CodexRuntime {
-  readonly name = "mock" as const;
+export class FakeCodexRuntime implements CodexRuntime {
+  readonly name = "sdk" as const;
 
-  constructor(private readonly options: MockCodexRuntimeOptions = {}) {}
+  constructor(private readonly options: FakeCodexRuntimeOptions = {}) {}
 
   async health(): Promise<CodexRuntimeHealth> {
     return {
       runtime: this.name,
       ready: true,
       auth: "ok",
-      codexCliVersion: "mock",
+      codexCliVersion: "fake",
       checks: {
         codex_cli: "skipped",
         codex_auth: "skipped"
@@ -32,15 +32,15 @@ export class MockCodexRuntime implements CodexRuntime {
   }
 
   startThread(_options: RuntimeThreadOptions): RuntimeThread {
-    return new MockRuntimeThread(this.options.delayMs ?? 0);
+    return new FakeRuntimeThread(this.options.delayMs ?? 0);
   }
 
   resumeThread(id: string, _options: RuntimeThreadOptions): RuntimeThread {
-    return new MockRuntimeThread(this.options.delayMs ?? 0, id);
+    return new FakeRuntimeThread(this.options.delayMs ?? 0, id);
   }
 }
 
-class MockRuntimeThread implements RuntimeThread {
+class FakeRuntimeThread implements RuntimeThread {
   private threadId: string | null;
 
   constructor(
@@ -55,7 +55,7 @@ class MockRuntimeThread implements RuntimeThread {
   }
 
   async runStreamed(input: string, options: RuntimeTurnOptions) {
-    const threadId = this.threadId ?? `codex_mock_${randomUUID()}`;
+    const threadId = this.threadId ?? `codex_fake_${randomUUID()}`;
     const delayMs = this.delayMs;
     this.threadId = threadId;
 
@@ -68,7 +68,7 @@ class MockRuntimeThread implements RuntimeThread {
         item: {
           id: `item_${randomUUID()}`,
           type: "agent_message",
-          text: `Mock Codex response: ${input}`
+          text: `Fake Codex response: ${input}`
         }
       };
       await abortableDelay(delayMs, options.signal);
@@ -77,6 +77,7 @@ class MockRuntimeThread implements RuntimeThread {
         usage: {
           input_tokens: 1,
           cached_input_tokens: 0,
+          cache_write_input_tokens: 0,
           output_tokens: 1,
           reasoning_output_tokens: 0
         }

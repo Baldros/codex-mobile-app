@@ -23,8 +23,8 @@ Android app
 The default runtime is `app-server`, because it supports richer Codex client
 behavior: persisted conversations, settings, model/account data, apps, skills,
 MCP resources, streamed events, and human-in-the-loop approvals. The SDK runtime
-is still available as a simpler adapter, and `mock` is available for tests and
-local development without calling Codex.
+is still available as a simpler adapter. Tests use an isolated fake runtime that
+is not included as a production runtime option.
 
 Official Codex references:
 
@@ -87,7 +87,6 @@ Supported values are:
 
 - `app-server`: uses `codex app-server` over stdio JSON-RPC. Recommended.
 - `sdk`: uses `@openai/codex-sdk`.
-- `mock`: deterministic runtime for tests and UI work.
 
 The bridge listens on `127.0.0.1:8787` by default. Confirm it with:
 

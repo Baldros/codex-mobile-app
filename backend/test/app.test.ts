@@ -5,19 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import type { BridgeConfig } from "../src/config.js";
-import { MockCodexRuntime } from "../src/runtime/MockCodexRuntime.js";
 import type { RuntimeThreadOptions } from "../src/runtime/types.js";
 import { InMemoryThreadStore } from "../src/threads/InMemoryThreadStore.js";
 import { ThreadService } from "../src/threads/ThreadService.js";
+import { FakeCodexRuntime } from "./support/FakeCodexRuntime.js";
 
 describe("Codex bridge HTTP API", () => {
   let server: Server;
   let baseUrl: string;
-  let runtime: CapturingMockCodexRuntime;
+  let runtime: CapturingFakeCodexRuntime;
 
   beforeEach(async () => {
     const config = testConfig();
-    runtime = new CapturingMockCodexRuntime();
+    runtime = new CapturingFakeCodexRuntime();
     const threadService = new ThreadService({
       config,
       runtime,
@@ -40,7 +40,7 @@ describe("Codex bridge HTTP API", () => {
       status: "ok",
       codex_ready: true,
       auth: "ok",
-      active_transport: "mock"
+      active_transport: "sdk"
     });
   });
 
@@ -155,7 +155,7 @@ describe("Codex bridge HTTP API", () => {
         message: "use explicit execution settings",
         approval_policy: "never",
         sandbox_mode: "danger-full-access",
-        model_reasoning_effort: "high",
+        model_reasoning_effort: "ultra",
         network_access_enabled: true
       })
     });
@@ -165,7 +165,7 @@ describe("Codex bridge HTTP API", () => {
     expect(runtime.lastOptions).toMatchObject({
       approvalPolicy: "never",
       sandboxMode: "danger-full-access",
-      modelReasoningEffort: "high",
+      modelReasoningEffort: "ultra",
       networkAccessEnabled: true
     });
   });
@@ -313,7 +313,7 @@ describe("Codex bridge cancellation", () => {
     const config = testConfig({ heartbeatMs: 50 });
     const threadService = new ThreadService({
       config,
-      runtime: new MockCodexRuntime({ delayMs: 250 }),
+      runtime: new FakeCodexRuntime({ delayMs: 250 }),
       store: new InMemoryThreadStore()
     });
     server = createServer(createApp({ config, threadService }));
@@ -422,7 +422,7 @@ describe("Codex bridge cancellation", () => {
   });
 });
 
-class CapturingMockCodexRuntime extends MockCodexRuntime {
+class CapturingFakeCodexRuntime extends FakeCodexRuntime {
   lastOptions: RuntimeThreadOptions | null = null;
 
   override startThread(options: RuntimeThreadOptions) {
@@ -440,7 +440,7 @@ function testConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
   const config: BridgeConfig = {
     host: "127.0.0.1",
     port: 8787,
-    runtime: "mock",
+    runtime: "sdk",
     workspaceAllowlist: [process.cwd()],
     workspaceAllowlistFile: "__missing_allowlist__",
     defaultWorkspace: process.cwd(),
