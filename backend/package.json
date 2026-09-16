@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Local Codex bridge for the internal Codex mobile app.",
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -17,13 +17,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@openai/codex-sdk": "^0.137.0",
-    "zod": "^4.4.3"
+    "@openai/codex-sdk": "^0.154.0",
+    "zod": "^4.6.2"
   },
   "devDependencies": {
-    "@types/node": "^25.9.2",
-    "tsx": "^4.22.4",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "@types/node": "^26.5.1",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
   }
 }

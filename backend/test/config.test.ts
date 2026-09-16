@@ -11,7 +11,7 @@ describe("bridge config", () => {
     const config = getBridgeConfig({
       CODEX_BRIDGE_HOST: "127.0.0.1",
       CODEX_BRIDGE_PORT: "19000",
-      CODEX_BRIDGE_RUNTIME: "mock",
+      CODEX_BRIDGE_RUNTIME: "sdk",
       CODEX_BRIDGE_WORKSPACE_ALLOWLIST: root,
       CODEX_BRIDGE_SKIP_GIT_REPO_CHECK: "true",
       CODEX_BRIDGE_DEFAULT_MODEL: "gpt-5.4",
@@ -21,12 +21,16 @@ describe("bridge config", () => {
     expect(config).toMatchObject({
       host: "127.0.0.1",
       port: 19000,
-      runtime: "mock",
+      runtime: "sdk",
       defaultSkipGitRepoCheck: true,
       defaultModel: "gpt-5.4",
       heartbeatMs: 1000
     });
     expect(config.workspaceAllowlist).toEqual([path.resolve(root)]);
+  });
+
+  it("rejects the removed production mock runtime", () => {
+    expect(() => getBridgeConfig({ CODEX_BRIDGE_RUNTIME: "mock" })).toThrow();
   });
 });
 

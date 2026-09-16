@@ -6,7 +6,7 @@ import type { BridgeThreadQuery, BridgeThreadService } from "./appServer/types.j
 import { getBridgeConfig, type BridgeConfig } from "./config.js";
 import { AppError, getErrorPayload } from "./errors.js";
 import { FileSystemService } from "./filesystem/FileSystemService.js";
-import { createRuntime } from "./runtime/createRuntime.js";
+import { SdkCodexRuntime } from "./runtime/SdkCodexRuntime.js";
 import type { CodexRuntimeHealth } from "./runtime/types.js";
 import { RunRegistry } from "./runs/RunRegistry.js";
 import { SseWriter } from "./sse.js";
@@ -446,7 +446,7 @@ function createDefaultThreadService(
 
   return new ThreadService({
     config,
-    runtime: createRuntime(config),
+    runtime: new SdkCodexRuntime(),
     store: new InMemoryThreadStore(),
     workspaceService
   });

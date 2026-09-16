@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { IconAction } from "../components/IconAction";
 import { Screen } from "../components/Screen";
 import type { ApprovalPolicy, ReasoningEffort, SandboxMode } from "../domain/bridge";
+import { effortsForModel } from "../domain/composerOptions";
 import {
   EXECUTION_PRESETS,
   approvalPolicies,
@@ -20,8 +21,6 @@ import { McpServerRow } from "./settings/McpServerRow";
 import { InfoRow, OptionGrid } from "./settings/SettingsRows";
 import { styles } from "./settings/styles";
 
-const fallbackEfforts: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
-
 export function SettingsScreen() {
   const bridge = useBridge();
   const insets = useSafeAreaInsets();
@@ -33,8 +32,7 @@ export function SettingsScreen() {
     [bridge.models, bridge.selectedModelId]
   );
   const serviceTiers = selectedModel?.serviceTiers ?? [];
-  const effortOptions = selectedModel?.supportedReasoningEfforts?.map((item) => item.reasoningEffort);
-  const efforts = effortOptions && effortOptions.length > 0 ? effortOptions : fallbackEfforts;
+  const efforts = effortsForModel(selectedModel);
   const activeExecutionPreset = findExecutionPreset({
     sandboxMode: bridge.sandboxMode,
     approvalPolicy: bridge.approvalPolicy,

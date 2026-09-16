@@ -90,4 +90,38 @@ describe("runtime event mapping", () => {
       }
     ]);
   });
+
+  it("maps the complete SDK token usage contract", () => {
+    const events = mapRuntimeEvent(
+      {
+        type: "turn.completed",
+        usage: {
+          input_tokens: 12,
+          cached_input_tokens: 4,
+          cache_write_input_tokens: 3,
+          output_tokens: 7,
+          reasoning_output_tokens: 2
+        }
+      },
+      context
+    );
+
+    expect(events).toEqual([
+      {
+        event: "done",
+        data: {
+          thread_id: "thr_1",
+          run_id: "run_1",
+          status: "completed",
+          usage: {
+            input_tokens: 12,
+            cached_input_tokens: 4,
+            cache_write_input_tokens: 3,
+            output_tokens: 7,
+            reasoning_output_tokens: 2
+          }
+        }
+      }
+    ]);
+  });
 });

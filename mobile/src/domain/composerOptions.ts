@@ -1,6 +1,6 @@
 import type { CodexModel, ReasoningEffort } from "./bridge";
 
-export const fallbackEfforts: ReasoningEffort[] = ["low", "medium", "high", "xhigh"];
+export const fallbackEfforts: ReasoningEffort[] = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
 export type FastTierOption = {
   id: string;
