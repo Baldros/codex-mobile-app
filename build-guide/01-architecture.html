@@ -188,10 +188,10 @@
             <ul>
               <li>Run locally and bind <strong>only</strong> to the tunnel address — never <code>0.0.0.0</code>.</li>
               <li>Normalize a stable HTTP/SSE API for mobile.</li>
-              <li>Encapsulate differences between Codex SDK, <code>app-server</code> and <code>exec</code>.</li>
+              <li>Encapsulate differences between <code>app-server</code>, Codex SDK, and the mock runtime.</li>
               <li>Control cancellation, heartbeats and thread history.</li>
             </ul>
-            <p><strong>Stack:</strong> Node.js 18+, TypeScript and <code>@openai/codex-sdk</code> as the preferred path to MVP.</p>
+            <p><strong>Stack:</strong> Node.js 22.12+, TypeScript, and <code>codex app-server</code> as the default runtime.</p>
           </div>
         </details>
 
@@ -199,9 +199,9 @@
           <summary>Codex Runtime <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
           <div class="acc__body">
             <ul>
-              <li><code>@openai/codex-sdk</code> — preferred for programmatic MVP.</li>
-              <li><code>codex app-server</code> — rich experience with events, history, and approvals (JSON-RPC 2.0; parts marked as experimental).</li>
-              <li><code>codex exec --json</code> — stable fallback for non-interactive tasks.</li>
+              <li><code>codex app-server</code> — default runtime, with events, persisted history, settings, apps, skills, MCP resources, and approvals over JSON-RPC.</li>
+              <li><code>@openai/codex-sdk</code> — simpler adapter for flows that do not need the complete app-server surface.</li>
+              <li><code>mock</code> — deterministic runtime for tests and local UI development.</li>
             </ul>
             <p>The mobile contract remains HTTP/SSE even if the internal runtime changes — the app does not depend on the app-server protocol.</p>
           </div>

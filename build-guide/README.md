@@ -39,7 +39,7 @@ The mobile app is only an **operations client**. Everything sensitive, including
 
 ### You Will Need (on the Windows Desktop)
 
-- **Node.js** 20 LTS+ · **JDK 17** · **Android SDK** (command-line tools) · **WireGuard for Windows**
+- **Node.js** 22.12+ · **JDK 17** · **Android SDK** (command-line tools) · **WireGuard for Windows**
 - An **Android device** with USB debugging enabled and the free **WireGuard** app installed
 
 ### The Path, Step by Step
