@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Troubleshooting · Codex Mobile</title>
-  <meta name="description" content="Common SSH, Gradle build, and 5G connection errors in Codex Mobile, with probable cause and fix." />
+  <meta name="description" content="Common WireGuard, Gradle build, and mobile-data connection errors in Codex Mobile, with probable cause and fix." />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2310a37f'/></svg>" />
 </head>
@@ -19,7 +19,7 @@
     <nav class="topnav">
       <a href="01-architecture.html">Architecture</a>
       <a href="02-prerequisites.html">Prerequisites</a>
-      <a href="03-ssh-setup.html">SSH</a>
+      <a href="03-wireguard-setup.html">VPN</a>
       <a href="04-build-run.html">Build</a>
       <a href="05-security.html">Security</a>
     </nav>
@@ -36,7 +36,7 @@
         <a href="index.html"><span class="num">★</span> Overview</a>
         <a href="01-architecture.html"><span class="num">1</span> Architecture</a>
         <a href="02-prerequisites.html"><span class="num">2</span> Prerequisites</a>
-        <a href="03-ssh-setup.html"><span class="num">3</span> SSH Tunnel</a>
+        <a href="03-wireguard-setup.html"><span class="num">3</span> WireGuard VPN</a>
         <a href="04-build-run.html"><span class="num">4</span> Build & Run</a>
         <a href="05-security.html"><span class="num">5</span> Security</a>
         <a href="06-troubleshooting.html" class="active"><span class="num">6</span> Troubleshooting</a>
@@ -48,26 +48,46 @@
       <h1>Troubleshooting</h1>
       <p class="lead">
         When something fails, it's usually operation — not code. Start with the symptom in the table,
-        confirm the probable cause and apply the fix. Then run the 5G checklist.
+        confirm the probable cause and apply the fix. Then run the mobile-data checklist.
       </p>
 
-      <section id="ssh-conexao">
-        <h2>SSH connection & tunnel</h2>
+      <section id="tunel">
+        <h2>Tunnel &amp; connectivity</h2>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Symptom</th><th>Probable cause</th><th>Action</th></tr></thead>
             <tbody>
-              <tr><td>SSH timeout</td><td>Endpoint closed, CGNAT or wrong address</td><td>Validate public/IPv6 address, NAT, router, or VPN.</td></tr>
-              <tr><td>SSH authenticates but health fails</td><td>Bridge stopped or wrong remote port</td><td>Test the <code>/health</code> on the desktop and check the bridge loopback port.</td></tr>
-              <tr><td><code>PermitOpen</code> denies the connection</td><td>Remote port other than the one released</td><td>Check that the forward points to the bridge loopback declared in the <code>sshd_config</code>.</td></tr>
-              <tr><td>Works on Wi-Fi, not 5G</td><td>NAT/router/firewall</td><td>Test the external endpoint of another network; consider VPN/overlay.</td></tr>
-              <tr><td>Health fluctuates</td><td>Computer suspending or unstable network</td><td>Adjust power (no sleep) and reconnect backoff.</td></tr>
-              <tr><td>SSH keeps asking for password</td><td>Permissions <code>authorized_keys</code> incorrect</td><td>See <code>sshd.log</code> put <em>“bad ownership or modes”</em> and redo the permissions of the <a href="03-ssh-setup.html#ak-permissoes">chapter 3</a>.</td></tr>
+              <tr><td><code>Cannot parse IP address</code> when saving the peer</td><td>An endpoint with a port was typed into <strong>Allowed IPs</strong></td><td>That field takes CIDR only — no port, no brackets. The endpoint goes in <strong>Endpoint</strong>.</td></tr>
+              <tr><td>Handshake never completes</td><td>Public keys swapped between the two sides</td><td>The device's peer holds the <em>host's</em> public key, and the host's peer block holds the <em>device's</em>.</td></tr>
+              <tr><td><code>wg show</code> returns <code>Permission denied</code></td><td>Terminal is not elevated</td><td>Expected. Run it as Administrator; it says nothing about the tunnel's state.</td></tr>
+              <tr><td>Handshake completes, ping works, app stays <code>offline</code></td><td>The bridge is down, or bound to loopback instead of the tunnel address</td><td>Check the listening address and <code>/health</code>. The network path is fine — this is a bridge problem.</td></tr>
+              <tr><td>Tunnel drops after a few idle minutes</td><td><code>Persistent keepalive</code> empty on the device's peer</td><td>Set it to <code>25</code>.</td></tr>
+              <tr><td>Tunnel stops working after a reboot</td><td>Tunnel service left on <code>Manual</code></td><td>Set the service to <code>Automatic</code> — chapter 3, section 5.</td></tr>
+              <tr><td>Handshake works on Wi-Fi, not on mobile data</td><td>Endpoint, IPv6 address or router firewall</td><td>See the checklist below — it goes through the causes in order.</td></tr>
+              <tr><td>Worked remotely, then stopped after some hours</td><td>Dynamic DNS is publishing the <em>temporary</em> IPv6 address</td><td>The updater must send the stable address explicitly — chapter 3, section 8.</td></tr>
+              <tr><td>Health fluctuates</td><td>Computer sleeping, or unstable network</td><td>Disable automatic sleep; the client already reconnects with backoff.</td></tr>
+              <tr><td>New device works and the old one stops</td><td>Same key or same <code>/32</code> on two devices</td><td>One key pair and one <code>/32</code> per device.</td></tr>
             </tbody>
           </table>
         </div>
-        <p>The SSH server log on Windows is usually at:</p>
-        <div class="code"><div class="code__bar"><span class="code__lang">log path</span></div><pre><code>C:\ProgramData\ssh\logs\sshd.log</code></pre></div>
+
+        <p>Useful checks on the host — the first two need no elevation:</p>
+        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--user">common</span></div><pre><code>Get-Service -Name 'WireGuardTunnel$&lt;TUNNEL_NAME&gt;' | Select-Object Name,Status,StartType
+Get-NetUDPEndpoint -LocalPort &lt;WG_PORT&gt; | Select-Object LocalAddress,LocalPort
+Get-NetTCPConnection -State Listen -LocalPort &lt;BRIDGE_PORT&gt; | Select-Object LocalAddress</code></pre></div>
+
+        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--admin">admin</span></div><pre><code>&amp; "C:\Program Files\WireGuard\wg.exe" show &lt;TUNNEL_NAME&gt;</code></pre></div>
+
+        <p>The repository also ships a script that runs all of this at once:</p>
+        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--user">common</span></div><pre><code>.\scripts\validate_wireguard_ready.ps1</code></pre></div>
+
+        <div class="callout callout--warn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          <div>
+            <span class="callout__title">Do not diagnose with an online port checker</span>
+            <p>An open UDP port with a silent listener is indistinguishable from a filtered one, and a silent listener is exactly what WireGuard is. Port-check sites report "closed" or "filtered" with everything working perfectly. The only conclusive test is a real handshake: <code>latest handshake</code> in <code>wg show</code>.</p>
+          </div>
+        </div>
       </section>
 
       <section id="build">
@@ -87,7 +107,7 @@
         <h3 id="gradle-cmake">Failure of <code>gradlew clean</code> in CMake/autolinking</h3>
         <p>Typical symptom:</p>
         <div class="code"><div class="code__bar"><span class="code__lang">error</span></div><pre><code>add_subdirectory given source ... /codegen/jni/ which is not an existing directory</code></pre></div>
-        <p>That <strong>no</strong> it's SSH error — it's old incremental native state. Do the native reset and repeat the clean:</p>
+        <p>That is <strong>not</strong> a network error — it is stale incremental native state. Do the native reset and repeat the clean:</p>
         <div class="code"><div class="code__bar"><span class="code__lang">PowerShell Terminal 2</span><span class="badge badge--user">common</span></div><pre><code>cd &lt;PROJECT_ROOT&gt;\mobile\android
 
 $targets = @("app\.cxx", "app\build\generated\autolinking")
@@ -97,46 +117,68 @@ foreach ($t in $targets) {
 
 .\gradlew.bat clean --no-daemon --console=plain --stacktrace</code></pre></div>
 
-        <h3 id="ip-wifi">A Wi-Fi IP appears as “Bridge”</h3>
-        <p>In dev build this is normal (Metro), but <strong>no</strong> must occur in the APK release. Correct in this order:</p>
+        <h3 id="ip-wifi">The wrong address appears as “Bridge”</h3>
+        <p>
+          Almost always a saved preference, not a build problem: <code>adb install -r</code> keeps the app's stored
+          settings, and <strong>the saved URL wins over the build-time default</strong>. Fix it in this order:
+        </p>
         <ol>
-          <li>Confirm that <code>EXPO_PUBLIC_BRIDGE_URL</code> is not defined in the build terminal.</li>
-          <li>Confirm that <code>CODEX_MOBILE_API_BASE_URL</code> and <code>CODEX_MOBILE_SSH_TUNNEL_LOCAL_URL</code> point to cell phone loopback.</li>
-          <li>Clear data before installing: <code>adb shell pm clear &lt;APP_PACKAGE_ID&gt;</code>.</li>
-          <li>Rebuild with the release flow.</li>
+          <li>In the app, <strong>Settings → Bridge</strong>, set the tunnel address and <strong>Save URL</strong>. This alone fixes most cases.</li>
+          <li>Confirm <code>EXPO_PUBLIC_BRIDGE_URL</code> is not defined in the build terminal.</li>
+          <li>Confirm <code>CODEX_MOBILE_GATEWAY=http</code> and that <code>CODEX_MOBILE_API_BASE_URL</code> points at the tunnel address.</li>
+          <li>Only if it persists, rebuild with the release flow.</li>
         </ol>
+        <p>
+          Clearing app data (<code>pm clear</code>) works too, but it wipes every other preference — treat it as a
+          last resort, not a first step.
+        </p>
       </section>
 
       <section id="checklist-5g">
-        <h2>5G Checklist</h2>
-        <p>Before you blame the app, go through the list. Check each item — your progress is saved in this browser.</p>
+        <h2>Mobile data checklist</h2>
+        <p>Before blaming the app, go through the list in order — the items are ordered by how often they are the cause. Your progress is saved in this browser.</p>
 
         <div class="progress">
           <div class="progress__bar"><div class="progress__fill"></div></div>
-          <div class="progress__label">0 of 8 steps completed (0%)</div>
+          <div class="progress__label">0 of 9 steps completed (0%)</div>
         </div>
 
         <ul class="checklist" data-store="fivetg">
-          <li><label><input type="checkbox" data-id="on"><span class="ck-text">Desktop on and without automatic sleep</span></label></li>
-          <li><label><input type="checkbox" data-id="health"><span class="ck-text">Codex Bridge responding on loopback<small>health <code>OK</code></small></span></label></li>
-          <li><label><input type="checkbox" data-id="sshd"><span class="ck-text">Service <code>sshd</code> running</span></label></li>
-          <li><label><input type="checkbox" data-id="auth"><span class="ck-text">Dedicated user authenticates with key</span></label></li>
-          <li><label><input type="checkbox" data-id="fw"><span class="ck-text">Windows Firewall releases OpenSSH Server</span></label></li>
-          <li><label><input type="checkbox" data-id="route"><span class="ck-text">SSH endpoint reachable from outside<small>Valid port forwarding, IPv6, or VPN</small></span></label></li>
-          <li><label><input type="checkbox" data-id="permit"><span class="ck-text"><code>PermitOpen</code> releasing bridge loopback</span></label></li>
-          <li><label><input type="checkbox" data-id="off"><span class="ck-text">Cellular on 5G (outside Wi-Fi) using loopback URL</span></label></li>
+          <li><label><input type="checkbox" data-id="on"><span class="ck-text">Desktop on, with automatic sleep disabled</span></label></li>
+          <li><label><input type="checkbox" data-id="svc"><span class="ck-text">Tunnel service <code>Running</code><small>And <code>Automatic</code>, so it survives a reboot</small></span></label></li>
+          <li><label><input type="checkbox" data-id="udp"><span class="ck-text">WireGuard listening on <code>::</code> and <code>0.0.0.0</code><small>The IPv6 listener is what makes mobile data possible</small></span></label></li>
+          <li><label><input type="checkbox" data-id="health"><span class="ck-text">Bridge responding on the tunnel address<small>health <code>OK</code>, and bound to that address only</small></span></label></li>
+          <li><label><input type="checkbox" data-id="endp"><span class="ck-text">Device endpoint is the public one, not the LAN address<small>The most common cause by far</small></span></label></li>
+          <li><label><input type="checkbox" data-id="stable"><span class="ck-text">Endpoint uses the <em>stable</em> IPv6 address<small><code>SuffixOrigin = Link</code>, never <code>Random</code></small></span></label></li>
+          <li><label><input type="checkbox" data-id="allowed"><span class="ck-text"><code>Allowed IPs</code> still points at the host only<small>Unchanged from the Wi-Fi setup</small></span></label></li>
+          <li><label><input type="checkbox" data-id="pinhole"><span class="ck-text">Router allows inbound UDP to the host<small>Only needed if its IPv6 firewall is not permissive</small></span></label></li>
+          <li><label><input type="checkbox" data-id="off"><span class="ck-text">Phone off Wi-Fi, tunnel active, handshake confirmed<small><code>latest handshake</code> present in <code>wg show</code></small></span></label></li>
         </ul>
         <button class="btn-reset" type="button">Clear progress</button>
 
         <div class="callout callout--tip">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c.5.5 1 1.5 1 3h6c0-1.5.5-2.5 1-3a7 7 0 0 0-4-12z"/></svg>
-          <div><p>Remember: in 5G the app continues talking to the local loopback. If the tunnel does not rise, the problem is in the <em>route to SSH</em> — not in the bridge URL.</p></div>
+          <div><p>Remember: on mobile data <strong>the bridge address does not change</strong>. If the tunnel does not come up, the problem is the <em>route to the WireGuard endpoint</em> — not the Bridge URL in the app.</p></div>
+        </div>
+
+        <div class="callout callout--note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <div><p>One thing this checklist cannot fix: if your mobile carrier does not provide IPv6 and your home IPv4 is behind CGNAT, there is no path in. That is a carrier limitation, not a configuration mistake — and it is not worth weakening a firewall to work around.</p></div>
         </div>
       </section>
 
       <section id="quando-pedir-ajuda">
         <h2>When to ask for help</h2>
-        <p>When reporting a problem, please include (no secrets): gateway mode, tunnel status (<code>connecting</code>/<code>ready</code>/error), if the <code>/health</code> responds on desktop, and the relevant excerpt from the <code>sshd.log</code>. This resolves most cases without exposing any credentials.</p>
+        <p>
+          When reporting a problem, include (with no secrets): the gateway mode, whether <code>latest handshake</code>
+          appears in <code>wg show</code>, whether <code>/health</code> answers on the desktop, and which address the
+          bridge is actually bound to. Those four facts separate a network problem from a bridge problem and resolve
+          most cases without exposing anything.
+        </p>
+        <p>
+          Never paste a private key, a configuration file containing one, your public IPv6 address or your dynamic
+          DNS name into a bug report.
+        </p>
       </section>
 
       <div class="pager">
