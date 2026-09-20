@@ -36,10 +36,10 @@ Por padrao, no web o app tenta acessar:
 http://127.0.0.1:8787
 ```
 
-Em mobile fisico, o default e:
+Em mobile fisico, o default aponta para o Bridge dentro do tunnel WireGuard:
 
 ```text
-http://127.0.0.1:18080
+http://10.77.77.1:8787
 ```
 
 Tambem e possivel sobrescrever no start:
@@ -49,22 +49,44 @@ $env:EXPO_PUBLIC_BRIDGE_URL="http://127.0.0.1:8787"
 npx expo start
 ```
 
-## Build config SSH
+## Build config
 
-Builds internos leem variaveis `CODEX_MOBILE_*` via `app.config.js`. Exemplo:
+Builds internos leem variaveis `CODEX_MOBILE_*` via `app.config.js`. Com o
+transporte WireGuard, sao apenas duas — de preferencia em `mobile/.env.local`,
+que e ignorado pelo Git:
 
-```powershell
-$env:CODEX_MOBILE_GATEWAY="ssh_tunnel"
-$env:CODEX_MOBILE_SSH_TUNNEL_LOCAL_URL="http://127.0.0.1:18080"
-$env:CODEX_MOBILE_SSH_REMOTE_HOSTS="[SEU_IPV6]:22,SEU_IPV4_PUBLICO:39223"
-$env:CODEX_MOBILE_SSH_USERNAME="seu_usuario"
-$env:CODEX_MOBILE_SSH_PASSWORD="sua_senha"
-$env:CODEX_MOBILE_SSH_REMOTE_API_HOST="127.0.0.1"
-$env:CODEX_MOBILE_SSH_REMOTE_API_PORT="8787"
-$env:CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET="true"
+```text
+CODEX_MOBILE_GATEWAY=http
+CODEX_MOBILE_API_BASE_URL=http://10.77.77.1:8787
 ```
 
-O modulo Android inicial de tunnel fica em `modules/codex-ssh-tunnel`. Ele exige dev build/APK nativo; Expo Go nao carrega esse modulo local.
+Ou por variavel de ambiente no terminal do build:
+
+```powershell
+$env:CODEX_MOBILE_GATEWAY="http"
+$env:CODEX_MOBILE_API_BASE_URL="http://10.77.77.1:8787"
+```
+
+**Nenhum segredo entra no APK.** A chave privada do WireGuard e gerada pelo app
+do WireGuard no proprio aparelho e nunca sai dele. Nao ha usuario, senha nem
+chave embutida no build.
+
+A URL salva em Settings tem precedencia sobre o default de build, e sobrevive a
+`adb install -r`.
+
+### Legado SSH
+
+O gateway `ssh_tunnel`, o `SshTunnelManager` e o modulo nativo
+`modules/codex-ssh-tunnel` continuam no codigo mas estao fora do caminho
+suportado. Com `gateway=http` nada disso e executado.
+
+Tres defaults ainda apontam para `ssh_tunnel` e serao removidos numa limpeza
+dedicada: `app.config.js`, os perfis de `eas.json` e o fallback de
+`parseGatewayMode`. O primeiro e o que importa no dia a dia — se
+`CODEX_MOBILE_GATEWAY` nao chegar ao processo do build, o `app.config.js` cai em
+`ssh_tunnel` **em silencio** e o APK sai com o gateway antigo sem nenhum erro.
+Confira `Gateway: http` em Settings depois de instalar. O build local nao usa
+`eas.json`.
 
 ## Scripts
 
@@ -84,7 +106,7 @@ npm run web
 - Timeline estruturada de atividade, ferramentas e aprovacoes human-in-the-loop, com cancelamento.
 - Mentions estruturadas no composer (`$app` / `$skill` / `$mcp`) e navegacao de recursos MCP.
 - Limites de conta e presets de modo de execucao (sandbox, approval policy, network).
-- Settings para URL do Bridge, build do tunnel SSH e defaults do Codex.
+- Settings para URL do Bridge e defaults do Codex.
 
 ## Estrutura
 
@@ -93,6 +115,7 @@ npm run web
 - `src/components/`: componentes reutilizaveis (`IconAction`, `MarkdownText`, `Screen`, ...).
 - `src/state/BridgeProvider.tsx`: estado central e cliente do bridge (contexto React, hook `useBridge`).
 - `src/domain/`: tipos e logica de dominio (tipos do bridge, mentions, partes de mensagem, parsing de historico, opcoes do composer).
-- `src/api/`: cliente HTTP/SSE. `src/transport/`: SSH tunnel manager.
+- `src/api/`: cliente HTTP/SSE.
 - `src/config/`, `src/storage/`, `src/theme/`, `src/utils/`: build config, preferencias, tema e utilidades.
-- `modules/codex-ssh-tunnel/`: modulo nativo Android do tunnel (exige dev build/APK).
+- `src/transport/` e `modules/codex-ssh-tunnel/`: manager e modulo nativo do
+  tunnel SSH. Legado, sem uso no gateway `http`.

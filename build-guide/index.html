@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Codex Mobile · Build Guide</title>
-  <meta name="description" content="Guide for building and installing the Codex Mobile app: prerequisites, SSH tunnel, APK build, and security best practices." />
+  <meta name="description" content="Guide for building and installing the Codex Mobile app: prerequisites, WireGuard VPN, APK build, and security best practices." />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2310a37f'/></svg>" />
 </head>
@@ -24,7 +24,7 @@
     <nav class="topnav">
       <a href="01-architecture.html">Architecture</a>
       <a href="02-prerequisites.html">Prerequisites</a>
-      <a href="03-ssh-setup.html">SSH</a>
+      <a href="03-wireguard-setup.html">VPN</a>
       <a href="04-build-run.html">Build</a>
       <a href="05-security.html">Security</a>
     </nav>
@@ -42,7 +42,7 @@
         <a href="index.html" class="active"><span class="num">★</span> Overview</a>
         <a href="01-architecture.html"><span class="num">1</span> Architecture</a>
         <a href="02-prerequisites.html"><span class="num">2</span> Prerequisites</a>
-        <a href="03-ssh-setup.html"><span class="num">3</span> SSH Tunnel</a>
+        <a href="03-wireguard-setup.html"><span class="num">3</span> WireGuard VPN</a>
         <a href="04-build-run.html"><span class="num">4</span> Build & Run</a>
         <a href="05-security.html"><span class="num">5</span> Security</a>
         <a href="06-troubleshooting.html"><span class="num">6</span> Troubleshooting</a>
@@ -56,7 +56,7 @@
         <h1>Compile Codex Mobile from scratch</h1>
         <p class="lead">
           An Android client that operates a local Codex CLI session on your desktop,
-          talking to her through a secure SSH tunnel — including on mobile networks.
+          talking to it over a private WireGuard VPN — including on mobile networks.
           This guide takes you from the empty environment to the installed APK, without opening anything from your
           machine for the internet.
         </p>
@@ -68,7 +68,7 @@
           The mobile app is just a <strong>operation customer</strong>. All power — the Codex CLI,
           OpenAI login, workspace, and permissions — remains in <strong>desktop</strong>,
           which is the trust boundary. The cell phone talks to a <strong>Codex Bridge</strong> location
-          through an SSH tunnel, and the only service reachable from outside is SSH.
+          inside a private WireGuard network, and the only thing reachable from outside is the VPN itself.
         </p>
 
         <div class="cards">
@@ -76,19 +76,19 @@
             <span class="card__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
             <span class="card__num">01</span>
             <h3>Architecture</h3>
-            <p>Why SSH tunnel, trust boundary, SSE transport and streaming.</p>
+            <p>Why a VPN, trust boundary, transport modes and SSE streaming.</p>
           </a>
           <a class="card" href="02-prerequisites.html">
             <span class="card__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
             <span class="card__num">02</span>
             <h3>Prerequisites</h3>
-            <p>Node.js, JDK 17, Android SDK, OpenSSH and the device in debug mode.</p>
+            <p>Node.js, JDK 17, Android SDK, WireGuard and the device in debug mode.</p>
           </a>
-          <a class="card" href="03-ssh-setup.html">
+          <a class="card" href="03-wireguard-setup.html">
             <span class="card__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
             <span class="card__num">03</span>
-            <h3>SSH Tunnel</h3>
-            <p>Dedicated user, key generation, <code>authorized_keys</code> and hardening of sshd.</p>
+            <h3>WireGuard VPN</h3>
+            <p>Host and device keys, peer setup, service persistence and mobile-data access.</p>
           </a>
           <a class="card" href="04-build-run.html">
             <span class="card__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
@@ -100,13 +100,13 @@
             <span class="card__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
             <span class="card__num">05</span>
             <h3>Security</h3>
-            <p>Built-in credential, environment variables, rotation and repository rules.</p>
+            <p>What the design protects, the open gaps, the hardening plan and where to check your work.</p>
           </a>
           <a class="card" href="06-troubleshooting.html">
             <span class="card__arrow"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
             <span class="card__num">06</span>
             <h3>Troubleshooting</h3>
-            <p>Common SSH, build and connection errors in 5G — with cause and fix.</p>
+            <p>Common tunnel, build and mobile-data errors — with cause and fix.</p>
           </a>
         </div>
       </section>
@@ -121,10 +121,11 @@
             <tbody>
               <tr><td><code>&lt;PROJECT_ROOT&gt;</code></td><td>Folder where you cloned the app repository.</td></tr>
               <tr><td><code>&lt;YOUR_USER&gt;</code></td><td>Your development Windows user.</td></tr>
-              <tr><td><code>&lt;SSH_USER&gt;</code></td><td>Dedicated and unprivileged user, created just for the tunnel (e.g.: <code>codex_ssh</code>).</td></tr>
-              <tr><td><code>&lt;BRIDGE_PORT&gt;</code></td><td>door <em>loopback</em> where Codex Bridge listens. Defined by you, it remains only in <code>127.0.0.1</code>.</td></tr>
-              <tr><td><code>&lt;LOCAL_FORWARD_PORT&gt;</code></td><td>door <em>loopback</em> on your cell phone to the local end of the tunnel.</td></tr>
-              <tr><td><code>&lt;SSH_ENDPOINT&gt;</code></td><td>How does the cell phone reach the desktop's sshd (LAN, IPv6 or VPN).</td></tr>
+              <tr><td><code>&lt;TUNNEL_NAME&gt;</code></td><td>Name you give the WireGuard tunnel on the host. It also names the Windows service.</td></tr>
+              <tr><td><code>&lt;HOST_TUNNEL_ADDRESS&gt;</code></td><td>The desktop's address <em>inside</em> the private network. Pick a range you do not already use.</td></tr>
+              <tr><td><code>&lt;DEVICE_TUNNEL_ADDRESS&gt;</code></td><td>The phone's address inside the same network, as a <code>/32</code>.</td></tr>
+              <tr><td><code>&lt;WG_PORT&gt;</code></td><td>UDP port WireGuard listens on. The only port that may ever reach you from the internet.</td></tr>
+              <tr><td><code>&lt;BRIDGE_PORT&gt;</code></td><td>TCP port where Codex Bridge listens, bound to the host's tunnel address only. <strong>Never</strong> forwarded on a router.</td></tr>
             </tbody>
           </table>
         </div>
@@ -133,7 +134,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <div>
             <span class="callout__title">Principle that guides everything here</span>
-            <p>The Codex Bridge is stuck to the <em>loopback</em> (<code>127.0.0.1</code>) and <strong>never</strong> is published on the network. It is only SSH that crosses the internet. That's why the guide avoids exposing ports, IPs or paths on your machine — and recommends that you do the same.</p>
+            <p>The Codex Bridge binds <strong>only</strong> to the host's address inside the private network, and is <strong>never</strong> published. A single UDP port crosses the internet: WireGuard's. That is also why this guide avoids printing real ports, addresses or paths — and recommends you keep yours out of anything you publish.</p>
           </div>
         </div>
       </section>
@@ -147,7 +148,7 @@
         </p>
         <div class="tag-legend">
           <div><span class="badge badge--user">Common terminal</span> build, install deps, generate and install APK</div>
-          <div><span class="badge badge--admin">Administrator</span> OpenSSH Server, create user, sshd, permissions, machine PATH</div>
+          <div><span class="badge badge--admin">Administrator</span> install WireGuard, set the tunnel service to automatic, machine PATH</div>
           <div><span class="badge badge--ps">PowerShell</span> Examples assume PowerShell on Windows</div>
         </div>
 
@@ -155,15 +156,20 @@
           <table>
             <thead><tr><th>Step</th><th>Privilege</th></tr></thead>
             <tbody>
-              <tr><td>Install OpenSSH Server / Windows Optional Features</td><td><span class="badge badge--admin">Admin</span></td></tr>
-              <tr><td>Create dedicated SSH user and adjust <code>authorized_keys</code></td><td><span class="badge badge--admin">Admin</span></td></tr>
-              <tr><td>Edit <code>sshd_config</code> and restart the service</td><td><span class="badge badge--admin">Admin</span></td></tr>
+              <tr><td>Install WireGuard for Windows</td><td><span class="badge badge--admin">Admin</span></td></tr>
+              <tr><td>Set the tunnel service to start automatically</td><td><span class="badge badge--admin">Admin</span></td></tr>
+              <tr><td>Inspect the tunnel with <code>wg show</code></td><td><span class="badge badge--admin">Admin</span></td></tr>
               <tr><td>Set environment variables in the scope of <em>machine</em></td><td><span class="badge badge--admin">Admin</span></td></tr>
               <tr><td>Install Node, JDK, Android SDK on your user</td><td><span class="badge badge--user">Common</span></td></tr>
-              <tr><td>Generate SSH key (<code>ssh-keygen</code>) in your user</td><td><span class="badge badge--user">Common</span></td></tr>
-              <tr><td>Climb the bridge, <code>npm install</code>, <code>expo prebuild</code>,Gradle, <code>adb</code></td><td><span class="badge badge--user">Common</span></td></tr>
+              <tr><td>Generate the host key and write the tunnel configuration</td><td><span class="badge badge--user">Common</span></td></tr>
+              <tr><td>Start the bridge, <code>npm install</code>, <code>expo prebuild</code>, Gradle, <code>adb</code></td><td><span class="badge badge--user">Common</span></td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="callout callout--note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <div><p>You do <strong>not</strong> need to add a Windows Firewall rule. WireGuard installs its own filters in the Windows Filtering Platform, which never show up in Defender Firewall — chapter 3 explains what to check instead.</p></div>
         </div>
       </section>
 
@@ -173,19 +179,20 @@
 
         <div class="progress">
           <div class="progress__bar"><div class="progress__fill"></div></div>
-          <div class="progress__label">0 of 9 steps completed (0%)</div>
+          <div class="progress__label">0 of 10 steps completed (0%)</div>
         </div>
 
         <ul class="checklist" data-store="overview">
-          <li><label><input type="checkbox" data-id="prq"><span class="ck-text">Prerequisites installed<small>Node.js, JDK 17, Android SDK, OpenSSH client and server</small></span></label></li>
-          <li><label><input type="checkbox" data-id="usr"><span class="ck-text">Dedicated SSH user created<small>Account without privileges, exclusive to the tunnel</small></span></label></li>
-          <li><label><input type="checkbox" data-id="key"><span class="ck-text">Generated and installed SSH key<small>Key per device in <code>authorized_keys</code></small></span></label></li>
-          <li><label><input type="checkbox" data-id="hard"><span class="ck-text">sshd with hardening<small>Forwarding restricted to bridge loopback</small></span></label></li>
-          <li><label><input type="checkbox" data-id="brg"><span class="ck-text">Codex Bridge responding<small>Health <code>OK</code> in loopback</small></span></label></li>
-          <li><label><input type="checkbox" data-id="env"><span class="ck-text">Defined build variables<small>Read from environment, never committed</small></span></label></li>
-          <li><label><input type="checkbox" data-id="dev"><span class="ck-text">USB authorized device<small><code>adb devices</code> show <code>device</code></small></span></label></li>
-          <li><label><input type="checkbox" data-id="apk"><span class="ck-text">APK release generated and installed<small>Embedded JS Bundle, without Metro</small></span></label></li>
-          <li><label><input type="checkbox" data-id="tun"><span class="ck-text">Tunnel <code>ready</code> in the app<small>Also validated outside of Wi-Fi</small></span></label></li>
+          <li><label><input type="checkbox" data-id="prq"><span class="ck-text">Prerequisites installed<small>Node.js, JDK 17, Android SDK, WireGuard on both ends</small></span></label></li>
+          <li><label><input type="checkbox" data-id="hkey"><span class="ck-text">Host key generated<small>Restricted ACL, outside the repository, never displayed</small></span></label></li>
+          <li><label><input type="checkbox" data-id="dkey"><span class="ck-text">Device tunnel created<small>Key generated on the phone; only the public key leaves it</small></span></label></li>
+          <li><label><input type="checkbox" data-id="peer"><span class="ck-text">Peers configured on both sides<small>Split route to the host only; one <code>/32</code> per device</small></span></label></li>
+          <li><label><input type="checkbox" data-id="svc"><span class="ck-text">Tunnel service on automatic startup<small>Survives a reboot</small></span></label></li>
+          <li><label><input type="checkbox" data-id="brg"><span class="ck-text">Codex Bridge responding<small>Health <code>OK</code>, bound to the tunnel address only</small></span></label></li>
+          <li><label><input type="checkbox" data-id="env"><span class="ck-text">Build variables defined<small>Two of them, and neither is a secret</small></span></label></li>
+          <li><label><input type="checkbox" data-id="dev"><span class="ck-text">USB authorized device<small><code>adb devices</code> shows <code>device</code></small></span></label></li>
+          <li><label><input type="checkbox" data-id="apk"><span class="ck-text">Release APK built and installed<small>Embedded JS bundle, no Metro</small></span></label></li>
+          <li><label><input type="checkbox" data-id="tun"><span class="ck-text">App <code>online</code> through the tunnel<small>Validated on Wi-Fi and off Wi-Fi</small></span></label></li>
         </ul>
         <button class="btn-reset" type="button">Clear progress</button>
       </section>

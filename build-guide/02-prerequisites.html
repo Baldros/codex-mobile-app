@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Prerequisites · Codex Mobile</title>
-  <meta name="description" content="Tools required to build Codex Mobile on Windows: Node.js, JDK 17, Android SDK, OpenSSH, and a device in debugging mode." />
+  <meta name="description" content="Tools required to build Codex Mobile on Windows: Node.js, JDK 17, Android SDK, WireGuard, and a device in debugging mode." />
   <link rel="stylesheet" href="styles.css" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%2310a37f'/></svg>" />
 </head>
@@ -19,7 +19,7 @@
     <nav class="topnav">
       <a href="01-architecture.html">Architecture</a>
       <a href="02-prerequisites.html" class="active">Prerequisites</a>
-      <a href="03-ssh-setup.html">SSH</a>
+      <a href="03-wireguard-setup.html">VPN</a>
       <a href="04-build-run.html">Build</a>
       <a href="05-security.html">Security</a>
     </nav>
@@ -36,7 +36,7 @@
         <a href="index.html"><span class="num">★</span> Overview</a>
         <a href="01-architecture.html"><span class="num">1</span> Architecture</a>
         <a href="02-prerequisites.html" class="active"><span class="num">2</span> Prerequisites</a>
-        <a href="03-ssh-setup.html"><span class="num">3</span> SSH Tunnel</a>
+        <a href="03-wireguard-setup.html"><span class="num">3</span> WireGuard VPN</a>
         <a href="04-build-run.html"><span class="num">4</span> Build & Run</a>
         <a href="05-security.html"><span class="num">5</span> Security</a>
         <a href="06-troubleshooting.html"><span class="num">6</span> Troubleshooting</a>
@@ -48,7 +48,7 @@
       <h1>Prerequisites</h1>
       <p class="lead">
         Everything is installed on <strong>Windows desktop</strong> which will do the build. Most of it goes in your
-        common user; only system resources (like OpenSSH Server) require Administrator.
+        common user; only system resources (like installing WireGuard) require Administrator.
         Always prefer official download versions.
       </p>
 
@@ -66,13 +66,13 @@
               <tr><td>Node.js</td><td>20 LTS+ (min. 18)</td><td>Bridge, Expo, build JS</td><td><span class="badge badge--user">Common</span></td></tr>
               <tr><td>JDK</td><td>17</td><td>Gradle/Android</td><td><span class="badge badge--user">Common</span></td></tr>
               <tr><td>Android SDK (cmdline-tools)</td><td>current</td><td>platform-tools, build-tools, adb</td><td><span class="badge badge--user">Common</span></td></tr>
-              <tr><td>OpenSSHClient</td><td>from Windows</td><td><code>ssh-keygen</code>, test tunnel</td><td><span class="badge badge--admin">Admin*</span></td></tr>
-              <tr><td>OpenSSH Server</td><td>from Windows</td><td>accept app tunnel</td><td><span class="badge badge--admin">Admin</span></td></tr>
+              <tr><td>WireGuard for Windows</td><td>current</td><td>the tunnel the phone connects to</td><td><span class="badge badge--admin">Admin</span></td></tr>
+              <tr><td>WireGuard for Android</td><td>current</td><td>the peer on the phone</td><td>—</td></tr>
               <tr><td>Git</td><td>current</td><td>clone the repository</td><td><span class="badge badge--user">Common</span></td></tr>
             </tbody>
           </table>
         </div>
-        <p style="font-size:13px;color:var(--text-muted)">* The OpenSSH client is usually already enabled on Windows 10/11. It only needs Admin if you have to enable it.</p>
+        <p style="font-size:13px;color:var(--text-muted)">OpenSSH is no longer part of this setup. If a previous version of this guide had you install and expose <code>sshd</code>, see the note at the end of section 4.</p>
       </section>
 
       <section id="node">
@@ -190,29 +190,35 @@ sdkmanager --licenses</code></pre></div>
         </div>
       </section>
 
-      <section id="openssh">
-        <h2>4 · OpenSSH (client and server)</h2>
+      <section id="wireguard">
+        <h2>4 · WireGuard (desktop and phone)</h2>
         <p>
-          O <strong>customer</strong> give the <code>ssh-keygen</code> and allows you to test the tunnel. THE <strong>server</strong>
-          (<code>sshd</code>) is the one that receives the tunnel from the cell phone — it is the only service that will be reachable from outside.
+          WireGuard is what carries the connection from the phone to your machine. The desktop is the
+          <strong>server</strong>; the phone is a peer. No paid VPN service is involved.
         </p>
 
-        <h3 id="openssh-client">OpenSSH Client <span class="badge badge--admin">Admin if missing</span></h3>
-        <p>In Windows 10/11 it is usually already active. Check first:</p>
-        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--user">common</span></div><pre><code>ssh -V</code></pre></div>
-        <p>If it does not exist, enable it as Administrator:</p>
-        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--admin">Administrator</span></div><pre><code>Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0</code></pre></div>
+        <h3 id="wireguard-desktop">Desktop <span class="badge badge--admin">Administrator</span></h3>
+        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--admin">Administrator</span></div><pre><code>winget install --id WireGuard.WireGuard -e</code></pre></div>
+        <p>Confirm the command-line tool is present:</p>
+        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--user">common</span></div><pre><code>&amp; "C:\Program Files\WireGuard\wg.exe" --version</code></pre></div>
 
-        <h3 id="openssh-server">OpenSSH Server <span class="badge badge--admin">Administrator</span></h3>
-        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--admin">Administrator</span></div><pre><code># Install the component
-Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+        <h3 id="wireguard-phone">Phone</h3>
+        <p>Install the official app from the store:</p>
+        <div class="code"><div class="code__bar"><span class="code__lang">Android</span></div><pre><code>Name:      WireGuard
+Publisher: WireGuard Development Team
+Package:   com.wireguard.android</code></pre></div>
 
-# Start and leave on automatic startup
-Start-Service sshd
-Set-Service -Name sshd -StartupType Automatic</code></pre></div>
         <div class="callout callout--note">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div><p>The security configuration of the <code>sshd</code> (dedicated user, key, hardening) comes in <a href="03-ssh-setup.html">chapter 3</a>. For now, just have the service installed and running.</p></div>
+          <div><p>Key generation, peer configuration and the tunnel itself come in <a href="03-wireguard-setup.html">chapter 3</a>. For now, just have both installed.</p></div>
+        </div>
+
+        <div class="callout callout--tip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c.5.5 1 1.5 1 3h6c0-1.5.5-2.5 1-3a7 7 0 0 0-4-12z"/></svg>
+          <div>
+            <span class="callout__title">OpenSSH is no longer required</span>
+            <p>Earlier versions of this guide installed OpenSSH Server to receive an SSH tunnel from the phone. That is gone. If you followed an older version and no other project on the machine needs it, consider turning <code>sshd</code> off — leaving it running keeps an extra service exposed for nothing.</p>
+          </div>
         </div>
       </section>
 
@@ -247,7 +253,7 @@ Set-Service -Name sshd -StartupType Automatic</code></pre></div>
 
       <div class="pager">
         <a href="01-architecture.html"><div class="dir">← Previous</div><div class="ttl">1 · Architecture</div></a>
-        <a class="next" href="03-ssh-setup.html"><div class="dir">Next →</div><div class="ttl">3 · SSH Tunnel</div></a>
+        <a class="next" href="03-wireguard-setup.html"><div class="dir">Next →</div><div class="ttl">3 · WireGuard VPN</div></a>
       </div>
       <footer class="sitefoot">Internal engineering document.</footer>
     </main>

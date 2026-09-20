@@ -19,7 +19,7 @@
     <nav class="topnav">
       <a href="01-architecture.html">Architecture</a>
       <a href="02-prerequisites.html">Prerequisites</a>
-      <a href="03-ssh-setup.html">SSH</a>
+      <a href="03-wireguard-setup.html">VPN</a>
       <a href="04-build-run.html" class="active">Build</a>
       <a href="05-security.html">Security</a>
     </nav>
@@ -36,7 +36,7 @@
         <a href="index.html"><span class="num">★</span> Overview</a>
         <a href="01-architecture.html"><span class="num">1</span> Architecture</a>
         <a href="02-prerequisites.html"><span class="num">2</span> Prerequisites</a>
-        <a href="03-ssh-setup.html"><span class="num">3</span> SSH Tunnel</a>
+        <a href="03-wireguard-setup.html"><span class="num">3</span> WireGuard VPN</a>
         <a href="04-build-run.html" class="active"><span class="num">4</span> Build & Run</a>
         <a href="05-security.html"><span class="num">5</span> Security</a>
         <a href="06-troubleshooting.html"><span class="num">6</span> Troubleshooting</a>
@@ -62,68 +62,77 @@
         <p>In the backend, install the dependencies, compile and run. The runtime <code>app-server</code> delivers rich experience with history and approvals.</p>
         <div class="code"><div class="code__bar"><span class="code__lang">PowerShell Terminal 1</span><span class="badge badge--user">common</span></div><pre><code>cd &lt;PROJECT_ROOT&gt;\backend
 npm install
-$env:CODEX_BRIDGE_RUNTIME = "app-server"
 npm run build
-npm run start</code></pre></div>
-        <p>In a third terminal (or before starting the build), validate health through loopback. Remember that <code>&lt;BRIDGE_PORT&gt;</code> is the door that you chose and that exists only in <code>127.0.0.1</code>:</p>
-        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--user">common</span></div><pre><code>Invoke-RestMethod "http://127.0.0.1:&lt;BRIDGE_PORT&gt;/health"</code></pre></div>
+
+$env:NODE_ENV = "production"
+$env:CODEX_BRIDGE_RUNTIME = "app-server"
+$env:CODEX_BRIDGE_HOST = "&lt;HOST_TUNNEL_ADDRESS&gt;"
+$env:CODEX_BRIDGE_PORT = "&lt;BRIDGE_PORT&gt;"
+node dist/server.js</code></pre></div>
+        <p>In a third terminal (or before starting the build), validate health over the tunnel address:</p>
+        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--user">common</span></div><pre><code>Invoke-RestMethod "http://&lt;HOST_TUNNEL_ADDRESS&gt;:&lt;BRIDGE_PORT&gt;/health"</code></pre></div>
         <p>Expected: <code>status = ok</code>, <code>codex_ready = true</code> and <code>active_transport = app-server</code>. Leave the bridge running.</p>
+
+        <p>Then confirm <strong>where</strong> it is actually listening — this is the check that matters:</p>
+        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell</span><span class="badge badge--user">common</span></div><pre><code>Get-NetTCPConnection -State Listen -LocalPort &lt;BRIDGE_PORT&gt; | Select-Object LocalAddress</code></pre></div>
+
+        <div class="callout callout--danger">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          <div>
+            <span class="callout__title">Only the tunnel address may appear</span>
+            <p>If that command shows <code>0.0.0.0</code>, the API is exposed to your whole LAN — and this API has no authentication. Stop and fix <code>CODEX_BRIDGE_HOST</code> before continuing. There is currently no guard in the code that refuses a public bind for you.</p>
+          </div>
+        </div>
       </section>
 
       <section id="variables">
         <h2>2 · Configure build variables <span class="badge badge--user">Terminal 2</span></h2>
         <p>
           Expo reads these variables at build time (via <code>app.config.js</code>) and injects them into the app.
-          The private key is <strong>file read</strong>, never written by hand — and these variables never
-          must be committed.
+          With WireGuard as the transport there are <strong>only two</strong>, and neither is a secret.
         </p>
+
+        <p>Prefer a <code>.env.local</code> file in <code>mobile/</code>, which is Git-ignored:</p>
         <div class="code"><div class="code__bar"><span class="code__lang">PowerShell Terminal 2</span><span class="badge badge--user">common</span></div><pre><code>cd &lt;PROJECT_ROOT&gt;\mobile
 
-# Ensure that no dev URL overwrites the tunnel config
+@'
+CODEX_MOBILE_GATEWAY=http
+CODEX_MOBILE_API_BASE_URL=http://&lt;HOST_TUNNEL_ADDRESS&gt;:&lt;BRIDGE_PORT&gt;
+'@ | Set-Content -Path .env.local -Encoding ascii
+
+Get-Content .env.local</code></pre></div>
+
+        <p>Or, equivalently, as environment variables in the same terminal that runs the build:</p>
+        <div class="code"><div class="code__bar"><span class="code__lang">PowerShell Terminal 2</span><span class="badge badge--user">common</span></div><pre><code># Ensure no dev URL overrides the build config
 Remove-Item Env:\EXPO_PUBLIC_BRIDGE_URL -ErrorAction SilentlyContinue
 
-$KeyPath = "$env:USERPROFILE\.ssh\codex_mobile_rsa"
-
-# --- Transport ---
-$env:CODEX_MOBILE_GATEWAY = "ssh_tunnel"
-$env:CODEX_MOBILE_API_BASE_URL = "http://127.0.0.1:&lt;LOCAL_FORWARD_PORT&gt;"
-$env:CODEX_MOBILE_SSH_TUNNEL_LOCAL_URL = "http://127.0.0.1:&lt;LOCAL_FORWARD_PORT&gt;"
-
-# --- Cascading SSH endpoints (LAN, IPv6, VPN...) ---
-$env:CODEX_MOBILE_SSH_REMOTE_HOSTS = "&lt;SSH_ENDPOINT_1&gt;,&lt;SSH_ENDPOINT_2&gt;"
-$env:CODEX_MOBILE_SSH_USERNAME = "&lt;SSH_USER&gt;"
-
-# --- Credential (read from file, never hardcoded) ---
-$env:CODEX_MOBILE_SSH_AUTH_MODE = "private_key"
-$env:CODEX_MOBILE_SSH_PRIVATE_KEY_PEM = Get-Content $KeyPath -Raw
-
-# --- Remote API: the bridge loopback, on the other side of the tunnel ---
-$env:CODEX_MOBILE_SSH_REMOTE_API_HOST = "127.0.0.1"
-$env:CODEX_MOBILE_SSH_REMOTE_API_PORT = "&lt;BRIDGE_PORT&gt;"
-
-# --- Explicit confirmation of embedded credentials ---
-$env:CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET = "true"</code></pre></div>
+$env:CODEX_MOBILE_GATEWAY = "http"
+$env:CODEX_MOBILE_API_BASE_URL = "http://&lt;HOST_TUNNEL_ADDRESS&gt;:&lt;BRIDGE_PORT&gt;"</code></pre></div>
 
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Variable</th><th>Paper</th></tr></thead>
+            <thead><tr><th>Variable</th><th>Role</th></tr></thead>
             <tbody>
-              <tr><td><code>CODEX_MOBILE_GATEWAY</code></td><td>Mode of transport: <code>ssh_tunnel</code> for in-house production.</td></tr>
-              <tr><td><code>CODEX_MOBILE_API_BASE_URL</code></td><td>URL that the app calls — always the loopback from the cell phone itself.</td></tr>
-              <tr><td><code>CODEX_MOBILE_SSH_REMOTE_HOSTS</code></td><td>List of SSH endpoints attempted to cascade.</td></tr>
-              <tr><td><code>CODEX_MOBILE_SSH_USERNAME</code></td><td>The dedicated user of <a href="03-ssh-setup.html">chapter 3</a>.</td></tr>
-              <tr><td><code>CODEX_MOBILE_SSH_PRIVATE_KEY_PEM</code></td><td>Contents of the private key, read from the file at build time.</td></tr>
-              <tr><td><code>CODEX_MOBILE_SSH_REMOTE_API_*</code></td><td>Bridge loopback, reached through the tunnel.</td></tr>
-              <tr><td><code>CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET</code></td><td>Conscious confirmation that the build embeds a secret.</td></tr>
+              <tr><td><code>CODEX_MOBILE_GATEWAY</code></td><td>Transport mode. <code>http</code> — the app talks straight to the bridge over the tunnel.</td></tr>
+              <tr><td><code>CODEX_MOBILE_API_BASE_URL</code></td><td>The bridge's address inside the private network.</td></tr>
             </tbody>
           </table>
         </div>
 
-        <div class="callout callout--danger">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+        <div class="callout callout--tip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c.5.5 1 1.5 1 3h6c0-1.5.5-2.5 1-3a7 7 0 0 0-4-12z"/></svg>
           <div>
-            <span class="callout__title">Any secret in the APK is recoverable</span>
-            <p>The embedded key can be extracted by anyone who has the binary. This is only acceptable in the internal profile because the SSH user is a dedicated, unprivileged user and the <code>PermitOpen</code> limits the forward to the bridge. Read the <a href="05-security.html">security page</a> before distributing any build.</p>
+            <span class="callout__title">No secret enters the APK</span>
+            <p>Every <code>CODEX_MOBILE_SSH_*</code> variable from the old design is gone, including <code>CODEX_MOBILE_ALLOW_EMBEDDED_SSH_SECRET</code>. There is no key, user or password to embed — the device's WireGuard key is generated by the WireGuard app and stays on the phone. That removes an entire class of problem rather than mitigating it.</p>
+          </div>
+        </div>
+
+        <div class="callout callout--note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <div>
+            <span class="callout__title">Legacy defaults still exist in the repo</span>
+            <p><code>mobile/app.config.js</code>, <code>mobile/eas.json</code> and the fallback in <code>parseGatewayMode</code> still default to <code>ssh_tunnel</code>. The first one matters: if the variable does not reach the build process — file not loaded, wrong terminal, variable cleared — the config falls back to <code>ssh_tunnel</code> <strong>silently</strong>, and the APK ships with the old gateway and no error anywhere.</p>
+            <p>That is why the <code>Gateway: http</code> check in step 7 is not a formality. It is the only place the mistake becomes visible.</p>
           </div>
         </div>
       </section>
@@ -139,7 +148,7 @@ if (-not (Test-Path .\android\gradlew.bat)) {
 }</code></pre></div>
         <div class="callout callout--note">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div><p>The APK release uses plain HTTP over <em>loopback</em> inside the tunnel. Confirm that the <code><application></code> in <code>mobile\android\app\src\main\AndroidManifest.xml</code> contains <code>android:usesCleartextTraffic="true"</code>. It is safe because traffic only occurs in <code>127.0.0.1</code>.</p></div>
+          <div><p>The APK release uses plain HTTP <em>inside</em> the tunnel. Confirm that the <code>&lt;application&gt;</code> in <code>mobile\android\app\src\main\AndroidManifest.xml</code> contains <code>android:usesCleartextTraffic="true"</code>. It is acceptable because WireGuard already provides confidentiality and authenticity — but note the flag is app-wide, so a Bridge URL saved <em>outside</em> the tunnel would also travel in the clear. See the <a href="05-security.html">security page</a>.</p></div>
         </div>
       </section>
 
@@ -195,19 +204,26 @@ adb install -r .\app\build\outputs\apk\release\app-release.apk</code></pre></div
 
       <section id="verificar">
         <h2>7 · Check in the app</h2>
-        <p>Open the screen <strong>Settings</strong> and check the transport diagnosis:</p>
+        <p>Make sure the WireGuard tunnel is active on the phone, then open <strong>Settings</strong>:</p>
         <ul>
-          <li><strong>Gateway:</strong> <code>ssh_tunnel</code></li>
-          <li><strong>Local URL:</strong> cell phone loopback</li>
-          <li><strong>Remote API:</strong> the bridge loopback</li>
-          <li><strong>SSH user:</strong> your dedicated user</li>
+          <li><strong>Bridge:</strong> the host's tunnel address and bridge port</li>
+          <li><strong>Gateway:</strong> <code>http</code></li>
           <li><strong>Config:</strong> <code>OK</code></li>
         </ul>
-        <p>Tap <em>refresh</em> or trigger an action that calls the bridge. The tunnel must leave <code>connecting</code> to <code>ready</code>. Then also validate <strong>off Wi-Fi</strong>, in 5G — the <a href="06-troubleshooting.html">chapter 6</a> bring the checklist.</p>
+        <p>Go back to the home screen; the status should turn <code>online</code>. Pick an allowed repository and start a conversation to exercise a real Codex run. Then validate again <strong>off Wi-Fi</strong>, on mobile data — <a href="06-troubleshooting.html">chapter 6</a> has the checklist.</p>
+
+        <div class="callout callout--note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          <div><p>The "Tunnel build" diagnostics block (Local URL, SSH user, Active endpoint) is empty with <code>gateway = http</code>. That is expected — there is no embedded tunnel to report on.</p></div>
+        </div>
 
         <div class="callout callout--warn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
-          <div><p>If the Bridge field shows a Wi-Fi IP instead of the loopback, it is an old dev configuration. Confirm that <code>EXPO_PUBLIC_BRIDGE_URL</code> is not defined, that local URLs point to the loopback, clear the data (<code>pm clear</code>) and rebuild.</p></div>
+          <div>
+            <span class="callout__title">If the Bridge field shows an old address</span>
+            <p><code>adb install -r</code> preserves the app's stored preferences, and <strong>the saved URL wins over the build-time default</strong>. Fix it in <strong>Settings → Bridge → Save URL</strong> rather than clearing app data, which also wipes everything else.</p>
+            <p>Useful side effect: an APK built with the old <code>ssh_tunnel</code> gateway works over the VPN with no rebuild. Saving a URL different from the embedded tunnel URL disables the embedded tunnel and the app falls back to plain HTTP.</p>
+          </div>
         </div>
       </section>
 
@@ -221,7 +237,7 @@ npx expo run:android</code></pre></div>
       </section>
 
       <div class="pager">
-        <a href="03-ssh-setup.html"><div class="dir">← Previous</div><div class="ttl">3 · SSH Tunnel</div></a>
+        <a href="03-wireguard-setup.html"><div class="dir">← Previous</div><div class="ttl">3 · WireGuard VPN</div></a>
         <a class="next" href="05-security.html"><div class="dir">Next →</div><div class="ttl">5 · Security</div></a>
       </div>
       <footer class="sitefoot">Internal engineering document.</footer>
