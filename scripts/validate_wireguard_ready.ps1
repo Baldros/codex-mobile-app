@@ -245,18 +245,6 @@ if ($temporary) {
     Add-Warn "Existe tambem um IPv6 temporario (SuffixOrigin Random). Ele rotaciona: nao use como Endpoint e nao publique via DDNS automatico."
 }
 
-Write-Section "Legado SSH"
-
-$sshdService = Get-Service -Name sshd -ErrorAction SilentlyContinue
-if ($null -eq $sshdService) {
-    Add-Ok "sshd nao instalado."
-} elseif ($sshdService.Status -eq "Running") {
-    Add-Warn "sshd esta rodando. O Codex Mobile nao usa mais SSH. Se o Atlas tambem nao usar, desligue: Stop-Service sshd; Set-Service sshd -StartupType Disabled"
-    Add-Warn "Enquanto a chave antiga estiver em authorized_keys, APKs antigos continuam com acesso. Ver F-05 em docs/SECURITY_POSTURE.md."
-} else {
-    Add-Ok "sshd instalado mas parado."
-}
-
 Write-Section "Checklist mobile"
 
 Write-Host "- URL do Bridge no app: http://${ApiHost}:${ApiPort}"

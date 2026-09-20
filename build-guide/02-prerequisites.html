@@ -72,7 +72,6 @@
             </tbody>
           </table>
         </div>
-        <p style="font-size:13px;color:var(--text-muted)">OpenSSH is no longer part of this setup. If a previous version of this guide had you install and expose <code>sshd</code>, see the note at the end of section 4.</p>
       </section>
 
       <section id="node">
@@ -213,13 +212,6 @@ Package:   com.wireguard.android</code></pre></div>
           <div><p>Key generation, peer configuration and the tunnel itself come in <a href="03-wireguard-setup.html">chapter 3</a>. For now, just have both installed.</p></div>
         </div>
 
-        <div class="callout callout--tip">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c.5.5 1 1.5 1 3h6c0-1.5.5-2.5 1-3a7 7 0 0 0-4-12z"/></svg>
-          <div>
-            <span class="callout__title">OpenSSH is no longer required</span>
-            <p>Earlier versions of this guide installed OpenSSH Server to receive an SSH tunnel from the phone. That is gone. If you followed an older version and no other project on the machine needs it, consider turning <code>sshd</code> off — leaving it running keeps an extra service exposed for nothing.</p>
-          </div>
-        </div>
       </section>
 
       <section id="device">

@@ -99,20 +99,8 @@
       </section>
 
       <section id="ganhos">
-        <h2>What the WireGuard design does fix</h2>
-        <p>The migration away from an SSH tunnel was not cosmetic. It closed a real class of problem:</p>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Before (SSH tunnel)</th><th>Now (WireGuard)</th></tr></thead>
-            <tbody>
-              <tr><td>Private key embedded in the APK, extractable from the binary</td><td>No secret in the APK; the key is born on the device</td></tr>
-              <tr><td>Rotating a credential meant rebuilding and redistributing</td><td>Rotating is one line on the host</td></tr>
-              <tr><td>The exposed service announced its version to any scanner</td><td>No reply to packets without a valid key</td></tr>
-              <tr><td>Pre-auth surface: a full SSH implementation</td><td>Noise_IK handshake, no cipher negotiation, small codebase</td></tr>
-              <tr><td>Revocation meant editing a user's <code>authorized_keys</code></td><td>Revocation is deleting a <code>[Peer]</code> block, effective immediately</td></tr>
-            </tbody>
-          </table>
-        </div>
+        <h2>What the WireGuard design protects</h2>
+        <p>WireGuard keeps device credentials outside the APK, drops unauthenticated packets without a reply, and lets the host revoke a device by removing its dedicated <code>[Peer]</code> block.</p>
         <p>
           Structurally, the model moved from <em>"shared secret shipped inside the client"</em> — the classic
           <a href="https://cwe.mitre.org/data/definitions/798.html" target="_blank" rel="noopener">CWE-798</a>,
@@ -178,14 +166,6 @@
           </div>
         </details>
 
-        <details class="acc">
-          <summary>Leftovers from the SSH design <span class="badge badge--user">Medium</span> <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></summary>
-          <div class="acc__body">
-            <p>If you followed an earlier version of this guide: <code>sshd</code> is probably still installed, running and listening on all interfaces, and <strong>APKs built before the migration still contain the embedded key</strong> — they keep working until it is revoked.</p>
-            <p><strong>Fix, in order:</strong> remove the app's key from <code>authorized_keys</code> (this alone invalidates every old APK); then, if nothing else on the machine needs it, stop and disable <code>sshd</code> and close its router rule.</p>
-            <p><strong>References:</strong> MITRE ATT&amp;CK <code>T1133</code> External Remote Services, <code>T1078</code> Valid Accounts.</p>
-          </div>
-        </details>
       </section>
 
       <section id="plano">
@@ -194,7 +174,7 @@
         <ol>
           <li><strong>Close the authorization gap.</strong> Token on the bridge and in the app, wildcard CORS removed, <code>Host</code> validated, bind guard added, filesystem browsing scoped.</li>
           <li><strong>Shrink the blast radius and gain visibility.</strong> Cleartext limited to the tunnel subnet, rate limiting, audit log, private release keystore, bridge running as a persistent service.</li>
-          <li><strong>Structural hardening.</strong> Retire <code>sshd</code>, per-peer preshared keys, QR-code pairing instead of a typed token, scheduled key rotation, periodic peer inventory review.</li>
+          <li><strong>Structural hardening.</strong> Add per-peer preshared keys, QR-code pairing instead of a typed token, scheduled key rotation, and periodic peer inventory review.</li>
         </ol>
 
         <div class="callout callout--tip">

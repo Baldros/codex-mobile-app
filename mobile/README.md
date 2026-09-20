@@ -74,19 +74,8 @@ chave embutida no build.
 A URL salva em Settings tem precedencia sobre o default de build, e sobrevive a
 `adb install -r`.
 
-### Legado SSH
-
-O gateway `ssh_tunnel`, o `SshTunnelManager` e o modulo nativo
-`modules/codex-ssh-tunnel` continuam no codigo mas estao fora do caminho
-suportado. Com `gateway=http` nada disso e executado.
-
-Tres defaults ainda apontam para `ssh_tunnel` e serao removidos numa limpeza
-dedicada: `app.config.js`, os perfis de `eas.json` e o fallback de
-`parseGatewayMode`. O primeiro e o que importa no dia a dia — se
-`CODEX_MOBILE_GATEWAY` nao chegar ao processo do build, o `app.config.js` cai em
-`ssh_tunnel` **em silencio** e o APK sai com o gateway antigo sem nenhum erro.
-Confira `Gateway: http` em Settings depois de instalar. O build local nao usa
-`eas.json`.
+Os gateways suportados sao `http` (padrao) e `mock`. Qualquer outro valor cai em
+`http`.
 
 ## Scripts
 
@@ -117,5 +106,3 @@ npm run web
 - `src/domain/`: tipos e logica de dominio (tipos do bridge, mentions, partes de mensagem, parsing de historico, opcoes do composer).
 - `src/api/`: cliente HTTP/SSE.
 - `src/config/`, `src/storage/`, `src/theme/`, `src/utils/`: build config, preferencias, tema e utilidades.
-- `src/transport/` e `modules/codex-ssh-tunnel/`: manager e modulo nativo do
-  tunnel SSH. Legado, sem uso no gateway `http`.

@@ -53,35 +53,21 @@
       </p>
 
       <section id="por-que">
-        <h2>Why a VPN instead of an SSH tunnel</h2>
+        <h2>Why WireGuard</h2>
         <p>
           Two facts decide this, and neither is a matter of taste.
         </p>
         <p>
           <strong>First:</strong> most residential connections are behind <strong>CGNAT</strong>
           (<a href="https://www.rfc-editor.org/rfc/rfc6598" target="_blank" rel="noopener">RFC 6598</a>,
-          the <code>100.64.0.0/10</code> range). Under CGNAT there is no IPv4 port forwarding — not for SSH,
-          not for anything. The zero-cost path in is <strong>IPv6</strong>, which is native and un-NATted on
+          the <code>100.64.0.0/10</code> range). Under CGNAT there is no IPv4 port forwarding for inbound
+          services. The zero-cost path in is <strong>IPv6</strong>, which is native and un-NATted on
           most modern links.
         </p>
         <p>
           <strong>Second:</strong> over IPv6 the service sits on the open internet with no NAT in front of it.
           At that point, <em>what</em> you expose stops being a detail.
         </p>
-
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th></th><th>Exposed sshd</th><th>Exposed WireGuard</th></tr></thead>
-            <tbody>
-              <tr><td>Reply to a scanner</td><td>Version banner and OS</td><td>Complete silence</td></tr>
-              <tr><td>Pre-auth surface</td><td>Full SSH parser</td><td>Noise_IK handshake, small codebase</td></tr>
-              <tr><td>Credential in the APK</td><td>Yes — extractable from the binary</td><td>None — the key is born on the device</td></tr>
-              <tr><td>Invalid packet</td><td>Error / negotiation</td><td>Dropped with no response</td></tr>
-              <tr><td>Revoke a device</td><td>Edit <code>authorized_keys</code></td><td>Delete a <code>[Peer]</code> block</td></tr>
-              <tr><td>Rotate a credential</td><td>Rebuild and redistribute the APK</td><td>Change one line on the host</td></tr>
-            </tbody>
-          </table>
-        </div>
 
         <div class="callout callout--tip">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12c.5.5 1 1.5 1 3h6c0-1.5.5-2.5 1-3a7 7 0 0 0-4-12z"/></svg>

@@ -124,13 +124,6 @@
           <div><p>On mobile data, <strong>the bridge does not change address</strong>. The app keeps talking to the same private address — only the WireGuard endpoint underneath changes.</p></div>
         </div>
 
-        <div class="callout callout--note">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-          <div>
-            <span class="callout__title">This replaced an SSH tunnel</span>
-            <p>Earlier versions of this guide used an SSH local port forward with a credential embedded in the APK. It was replaced because CGNAT makes IPv6 the only viable way in, and over IPv6 an extractable credential plus a service that announces its version is the wrong pair of properties to expose. <a href="03-wireguard-setup.html#por-que">Chapter 3</a> has the full comparison.</p>
-          </div>
-        </div>
       </section>
 
       <section id="transporte">
@@ -142,7 +135,6 @@
             <tbody>
               <tr><td><code>mock</code></td><td>UI development without real backend.</td></tr>
               <tr><td><code>http</code></td><td>Direct HTTP — over the tunnel in real use, over loopback in development. <strong>What this guide sets up.</strong></td></tr>
-              <tr><td><code>ssh_tunnel</code></td><td>Legacy. Still in the codebase, outside the supported path.</td></tr>
             </tbody>
           </table>
         </div>

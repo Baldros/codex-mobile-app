@@ -13,7 +13,6 @@ import { BridgeClient, approvalSummary } from "../api/bridgeClient";
 import { DEFAULT_PREFERENCES } from "../config/defaults";
 import {
   getCodexMobileBuildConfig,
-  validateSshTunnelBuildConfig,
   type CodexMobileBuildConfig
 } from "../config/mobileBuildConfig";
 import type {
@@ -57,7 +56,6 @@ import {
 } from "../domain/chatMessageParts";
 import { messagesFromThread } from "../domain/threadHistory";
 import { loadPreferences, savePreferences } from "../storage/preferences";
-import { SshTunnelManager, type TunnelStatusSnapshot } from "../transport/SshTunnelManager";
 import { asNumber, asString, createId, errorMessage, lowerString, normalizeUrl, trimMiddle } from "../utils/value";
 
 type BridgeContextValue = {
@@ -76,8 +74,6 @@ type BridgeContextValue = {
   mcpResource: McpResourceReadResponse | null;
   capabilities: BridgeCapabilities;
   buildConfig: CodexMobileBuildConfig;
-  tunnelConfigIssue: string | null;
-  tunnelStatus: TunnelStatusSnapshot;
   selectedWorkspace: WorkspaceEntry | null;
   selectedThread: BridgeThread | null;
   selectedModelId: string | null;
@@ -218,29 +214,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const attachedRunId = useRef<string | null>(null);
   const detachedAbortControllers = useRef(new Set<AbortController>());
   const buildConfig = useMemo(() => getCodexMobileBuildConfig(), []);
-  const tunnelConfigIssue = useMemo(
-    () => validateSshTunnelBuildConfig(buildConfig),
-    [buildConfig]
-  );
-  const tunnelManager = useMemo(() => new SshTunnelManager(buildConfig), [buildConfig]);
-  const [tunnelStatus, setTunnelStatus] = useState<TunnelStatusSnapshot>(
-    tunnelManager.getSnapshot()
-  );
-  const shouldUseEmbeddedTunnel =
-    buildConfig.gateway === "ssh_tunnel" &&
-    normalizeUrl(preferences.baseUrl) === normalizeUrl(buildConfig.sshTunnel.localUrl);
 
-  const client = useMemo(
-    () =>
-      new BridgeClient(preferences.baseUrl, {
-        ensureTransportReady: shouldUseEmbeddedTunnel
-          ? () => tunnelManager.ensureReady()
-          : undefined
-      }),
-    [preferences.baseUrl, shouldUseEmbeddedTunnel, tunnelManager]
-  );
-
-  useEffect(() => tunnelManager.subscribe(setTunnelStatus), [tunnelManager]);
+  const client = useMemo(() => new BridgeClient(preferences.baseUrl), [preferences.baseUrl]);
 
   const setSelectedThread = useCallback((thread: BridgeThread | null) => {
     selectedThreadRef.current = thread;
@@ -1564,8 +1539,6 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       mcpResource,
       capabilities,
       buildConfig,
-      tunnelConfigIssue,
-      tunnelStatus,
       selectedWorkspace,
       selectedThread,
       selectedModelId: preferences.selectedModelId ?? null,
@@ -1677,8 +1650,6 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       selectedThread,
       selectedWorkspace,
       skills,
-      tunnelStatus,
-      tunnelConfigIssue,
       threads,
       updatePreferences,
       workspaces
