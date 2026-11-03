@@ -4,6 +4,10 @@ export function isActiveRunStatus(status: string) {
   return status === "starting" || status === "running" || status === "waiting_approval";
 }
 
+export function startFailureDisposition(error: { status?: number }): "rejected" | "uncertain" {
+  return error.status && error.status >= 400 && error.status < 500 ? "rejected" : "uncertain";
+}
+
 export function pickAttachableRun(runs: BridgeRunSummary[], threadId: string | null | undefined) {
   if (!threadId) return null;
   const run = runs.find((item) => item.thread_id === threadId && isActiveRunStatus(item.status));

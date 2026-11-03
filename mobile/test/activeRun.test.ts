@@ -1,4 +1,4 @@
-import { decideRunEvent, pickAttachableRun } from "../src/domain/activeRun";
+import { decideRunEvent, pickAttachableRun, startFailureDisposition } from "../src/domain/activeRun";
 import type { BridgeRunSummary } from "../src/domain/bridge";
 
 const run: BridgeRunSummary = { run_id: "run-1", thread_id: "thread-1", status: "running", created_at: "", updated_at: "", last_event_seq: 4 };
@@ -6,6 +6,13 @@ const run: BridgeRunSummary = { run_id: "run-1", thread_id: "thread-1", status: 
 test("selects only the active run for the selected thread", () => {
   expect(pickAttachableRun([{ ...run, status: "completed" }, run], "thread-1")).toEqual({ id: "run-1", threadId: "thread-1" });
   expect(pickAttachableRun([run], "thread-2")).toBeNull();
+});
+
+test("keeps ambiguous server and transport start failures pending", () => {
+  expect(startFailureDisposition({ status: 400 })).toBe("rejected");
+  expect(startFailureDisposition({ status: 409 })).toBe("rejected");
+  expect(startFailureDisposition({ status: 500 })).toBe("uncertain");
+  expect(startFailureDisposition({})).toBe("uncertain");
 });
 
 test("accepts only the next event for the correct run and thread", () => {

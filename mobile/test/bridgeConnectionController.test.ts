@@ -36,3 +36,15 @@ test("stopped controller cannot overwrite a new endpoint after a late response",
   await Promise.resolve();
   expect(restored).not.toHaveBeenCalled();
 });
+
+test("an application error response still proves Bridge reachability", async () => {
+  jest.useFakeTimers();
+  const capabilities = jest.fn().mockRejectedValue(Object.assign(new Error("Codex unavailable"), { status: 503 }));
+  const states: string[] = [];
+  const controller = new BridgeConnectionController({ capabilities } as unknown as BridgeClient,
+    (state) => states.push(state), jest.fn());
+  controller.start();
+  await jest.advanceTimersByTimeAsync(0);
+  expect(states).toEqual(["connected"]);
+  controller.stop();
+});

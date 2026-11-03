@@ -46,7 +46,7 @@ import type {
   WorkspaceEntry
 } from "../domain/bridge";
 import type { UploadedAttachment } from "../domain/bridge";
-import { decideRunEvent, pickAttachableRun } from "../domain/activeRun";
+import { decideRunEvent, pickAttachableRun, startFailureDisposition } from "../domain/activeRun";
 import { BridgeConnectionController, type BridgeConnectionStatus } from "./BridgeConnectionController";
 import {
   activityPartId,
@@ -1177,14 +1177,14 @@ export function BridgeProvider({ children }: PropsWithChildren) {
           const message = errorMessage(caught);
           setError(message);
           const httpError = caught as BridgeRequestError;
-          if (httpError.status) {
+          if (startFailureDisposition(httpError) === "rejected") {
             pendingSubmission.current = null;
             setMessages((current) => current.filter((item) => item.id !== userMessage.id && item.id !== assistantMessageId));
             outcome = "rejected";
           } else {
             outcome = "uncertain";
             setError("Submission outcome is unknown. The Bridge will be checked before another send.");
-            connectionControllerRef.current?.markRequestFailure();
+            if (!httpError.status) connectionControllerRef.current?.markRequestFailure();
           }
         }
         return { status: outcome, requestId };
@@ -1494,8 +1494,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       } else {
         setError("The run result is unresolved. Check the conversation before sending again.");
       }
-    } catch {
-      connectionControllerRef.current?.markRequestFailure();
+    } catch (error) {
+      if (!(error as BridgeRequestError).status) connectionControllerRef.current?.markRequestFailure();
     } finally {
       recoveryInFlight.current = false;
     }
@@ -1532,6 +1532,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     setIsRunning(true);
     setIsComposerLocked(true);
 
+    let bridgeRespondedWithError = false;
     void client
       .streamRunEvents(
         runId,
@@ -1564,12 +1565,16 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       )
       .catch((caught) => {
         if (!abortController.signal.aborted) {
+          bridgeRespondedWithError = Boolean((caught as BridgeRequestError).status);
           if ((caught as BridgeRequestError).code === "replay_gap") {
             replayGapRuns.current.add(runId);
             setError("Live event history has a gap. The transcript will be reloaded when the run finishes.");
+          } else if ((caught as BridgeRequestError).status === 404) {
+            replayGapRuns.current.add(runId);
+            setError("The Bridge no longer retains this run. Checking the conversation transcript.");
           } else if ((caught as BridgeRequestError).status !== 404) {
             setError(errorMessage(caught));
-            connectionControllerRef.current?.markRequestFailure();
+            if (!(caught as BridgeRequestError).status) connectionControllerRef.current?.markRequestFailure();
           }
         }
       })
@@ -1577,7 +1582,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         const detached = detachedAbortControllers.current.delete(abortController);
         if (!detached && attachedRunId.current === runId) {
           attachedRunId.current = null;
-          connectionControllerRef.current?.markRequestFailure();
+          if (!replayGapRuns.current.has(runId) && !bridgeRespondedWithError) connectionControllerRef.current?.markRequestFailure();
         }
       });
 
@@ -1759,7 +1764,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       void reconcileRun();
     } catch (error) {
       setError(`Cancellation outcome is unknown: ${errorMessage(error)}`);
-      connectionControllerRef.current?.markRequestFailure();
+      if (!(error as BridgeRequestError).status) connectionControllerRef.current?.markRequestFailure();
     }
   }, [activeRuns, client, reconcileRun, selectedThread?.id]);
 
