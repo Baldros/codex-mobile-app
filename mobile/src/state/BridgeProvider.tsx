@@ -8,8 +8,10 @@ import React, {
   useState,
   type PropsWithChildren
 } from "react";
+import { AppState } from "react-native";
+import { File } from "expo-file-system";
 
-import { BridgeClient, approvalSummary } from "../api/bridgeClient";
+import { BridgeClient, approvalSummary, type BridgeRequestError } from "../api/bridgeClient";
 import { DEFAULT_PREFERENCES } from "../config/defaults";
 import {
   getCodexMobileBuildConfig,
@@ -43,6 +45,9 @@ import type {
   WorkspaceMutationResponse,
   WorkspaceEntry
 } from "../domain/bridge";
+import type { UploadedAttachment } from "../domain/bridge";
+import { decideRunEvent, pickAttachableRun } from "../domain/activeRun";
+import { BridgeConnectionController, type BridgeConnectionStatus } from "./BridgeConnectionController";
 import {
   activityPartId,
   appendActivityOutputPart,
@@ -55,6 +60,7 @@ import {
   upsertApprovalPart
 } from "../domain/chatMessageParts";
 import { messagesFromThread } from "../domain/threadHistory";
+import { reconcileTranscriptMessages } from "../domain/reconcileMessages";
 import { loadPreferences, savePreferences } from "../storage/preferences";
 import { asNumber, asString, createId, errorMessage, lowerString, normalizeUrl, trimMiddle } from "../utils/value";
 
@@ -86,6 +92,12 @@ type BridgeContextValue = {
   activities: ActivityItem[];
   pendingApprovals: PendingApproval[];
   activeRuns: BridgeRunSummary[];
+  connectionStatus: BridgeConnectionStatus;
+  pendingAttachments: UploadedAttachment[];
+  isUploadingAttachment: boolean;
+  failedUploadCount: number;
+  lastConfirmedRequestId: string | null;
+  hasUncertainSubmission: boolean;
   runningThreadId: string | null;
   isBooting: boolean;
   isRefreshing: boolean;
@@ -138,7 +150,12 @@ type BridgeContextValue = {
   removeWorkspace: (workspace: WorkspaceEntry) => Promise<WorkspaceMutationResponse | null>;
   restoreWorkspace: (path: string) => Promise<WorkspaceMutationResponse | null>;
   createNewThread: () => Promise<void>;
-  sendMessage: (message: string, inputItems?: RunInputItem[]) => Promise<void>;
+  sendMessage: (message: string, inputItems?: RunInputItem[]) => Promise<{ status: "accepted" | "rejected" | "uncertain"; requestId?: string }>;
+  pickAttachment: () => Promise<void>;
+  retryPendingUploads: () => Promise<void>;
+  clearFailedUploads: () => void;
+  removePendingAttachment: (id: string) => Promise<void>;
+  clearUncertainSubmission: () => void;
   cancelRun: () => Promise<void>;
   respondApproval: (approval: PendingApproval, decision: string) => Promise<void>;
   saveCodexDefaults: () => Promise<void>;
@@ -191,6 +208,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const [activeRuns, setActiveRuns] = useState<BridgeRunSummary[]>([]);
+  const [connectionStatus, setConnectionStatus] = useState<BridgeConnectionStatus>("connecting");
+  const [pendingAttachments, setPendingAttachments] = useState<UploadedAttachment[]>([]);
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [failedUploadFiles, setFailedUploadFiles] = useState<File[]>([]);
+  const [lastConfirmedRequestId, setLastConfirmedRequestId] = useState<string | null>(null);
+  const [reattachGeneration, setReattachGeneration] = useState(0);
   const [isBooting, setIsBooting] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isRefreshingAccount, setIsRefreshingAccount] = useState(false);
@@ -212,10 +235,101 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const activeRunThreadId = useRef<string | null>(null);
   const activeUserMessageId = useRef<string | null>(null);
   const attachedRunId = useRef<string | null>(null);
+  const lastEventSeqByRun = useRef(new Map<string, number>());
+  const assistantMessageIdByRun = useRef(new Map<string, string>());
+  const replayGapRuns = useRef(new Set<string>());
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const streamLastSeenAt = useRef(0);
+  const recoveryInFlight = useRef(false);
+  const contextGeneration = useRef(0);
+  const pendingSubmission = useRef<{ threadId: string; requestId: string; message: string; assistantMessageId: string; userMessageId: string; attachmentIds: string[] } | null>(null);
+  const isUploadingAttachmentRef = useRef(false);
+  const connectionControllerRef = useRef<BridgeConnectionController | null>(null);
   const detachedAbortControllers = useRef(new Set<AbortController>());
   const buildConfig = useMemo(() => getCodexMobileBuildConfig(), []);
 
   const client = useMemo(() => new BridgeClient(preferences.baseUrl), [preferences.baseUrl]);
+  messagesRef.current = messages;
+
+  const uploadFiles = useCallback(async (files: File[]) => {
+    const uploadCapability = capabilities.uploads;
+    if (!uploadCapability?.enabled) {
+      setError("This Bridge does not support file attachments.");
+      return;
+    }
+    if (isUploadingAttachmentRef.current) return;
+    if (pendingAttachments.length + files.length > (uploadCapability.max_files ?? 5)) {
+      setError("You can attach at most five files to a message.");
+      return;
+    }
+    isUploadingAttachmentRef.current = true;
+    setIsUploadingAttachment(true);
+    setFailedUploadFiles([]);
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index]!;
+        if (!file.size || file.size > uploadCapability.max_bytes) {
+          setFailedUploadFiles(files.slice(index));
+          setError(`Attachment ${file.name} is empty or exceeds the ${uploadCapability.max_bytes} byte limit.`);
+          return;
+        }
+        try {
+          const dataBase64 = await file.base64();
+          const response = await client.uploadAttachment({ name: file.name, dataBase64 });
+          setPendingAttachments((current) => [...current, response.attachment]);
+        } catch (error) {
+          setFailedUploadFiles(files.slice(index));
+          setError(`Upload failed: ${errorMessage(error)}`);
+          if (!(error as BridgeRequestError).status) connectionControllerRef.current?.markRequestFailure();
+          return;
+        }
+      }
+    } finally {
+      isUploadingAttachmentRef.current = false;
+      setIsUploadingAttachment(false);
+    }
+  }, [capabilities.uploads, client, pendingAttachments.length]);
+
+  const pickAttachment = useCallback(async () => {
+    if (!capabilities.uploads?.enabled) {
+      setError("This Bridge does not support file attachments.");
+      return;
+    }
+    try {
+      const picked = await File.pickFileAsync({ multipleFiles: true });
+      if (!picked.canceled) await uploadFiles(picked.result);
+    } catch (error) {
+      setError(`Could not select a file: ${errorMessage(error)}`);
+    }
+  }, [capabilities.uploads?.enabled, uploadFiles]);
+
+  const retryPendingUploads = useCallback(async () => {
+    if (failedUploadFiles.length) await uploadFiles(failedUploadFiles);
+  }, [failedUploadFiles, uploadFiles]);
+
+  const clearFailedUploads = useCallback(() => {
+    setFailedUploadFiles([]);
+    setError(null);
+  }, []);
+
+  const removePendingAttachment = useCallback(async (id: string) => {
+    if (pendingSubmission.current?.attachmentIds.includes(id)) {
+      setError("Wait for the message outcome before removing this attachment.");
+      return;
+    }
+    setPendingAttachments((current) => current.filter((item) => item.id !== id));
+    try { await client.removeAttachment(id); } catch { /* TTL cleanup handles an unreachable Bridge. */ }
+  }, [client]);
+
+  const clearUncertainSubmission = useCallback(() => {
+    const pending = pendingSubmission.current;
+    pendingSubmission.current = null;
+    if (pending) setMessages((current) => current.filter((item) =>
+      item.id !== pending.userMessageId && item.id !== pending.assistantMessageId));
+    setIsComposerLocked(false);
+    setIsRunning(false);
+    setError(null);
+  }, []);
 
   const setSelectedThread = useCallback((thread: BridgeThread | null) => {
     selectedThreadRef.current = thread;
@@ -274,12 +388,13 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         const response = await client.getThread(thread.id, { includeTurns: true });
         if (isCurrentThreadContentRequest(requestId)) {
           setSelectedThread(response.thread);
-          setMessages(messagesFromThread(response.thread));
+          setMessages((current) => reconcileTranscriptMessages(messagesFromThread(response.thread), current, activeRunId.current));
         }
         return response.thread;
       } catch {
         if (isCurrentThreadContentRequest(requestId)) {
-          setMessages(messagesFromThread(thread));
+          setMessages((current) => current.length > 0 && selectedThreadRef.current?.id === thread.id
+            ? current : messagesFromThread(thread));
         }
         return thread;
       } finally {
@@ -470,6 +585,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   }, [client, selectedWorkspace?.path]);
 
   const refreshAll = useCallback(async () => {
+    const generation = contextGeneration.current;
     setIsRefreshing(true);
     setError(null);
 
@@ -491,11 +607,10 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         client.capabilities(),
         client.listActiveRuns()
       ]);
+      if (generation !== contextGeneration.current) return;
 
       if (healthResult.status === "fulfilled") {
         setHealth(healthResult.value);
-      } else {
-        setHealth(null);
       }
 
       const workspaceResponse =
@@ -507,27 +622,17 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       if (workspaceResponse) {
         setWorkspaces(workspaceResponse.data);
         setAllowlistFile(workspaceResponse.allowlist_file);
-      } else {
-        setWorkspaces([]);
-        setAllowlistFile(null);
       }
 
       if (modelResponse) {
         setModels(modelResponse.data);
-      } else {
-        setModels([]);
       }
-      setConfig(configResponse);
-      setAccount(accountResponse);
-      setCapabilities(
-        capabilitiesResult.status === "fulfilled" ? capabilitiesResult.value : DEFAULT_CAPABILITIES
-      );
+      if (configResponse) setConfig(configResponse);
+      if (accountResponse) setAccount(accountResponse);
+      if (capabilitiesResult.status === "fulfilled") setCapabilities(capabilitiesResult.value);
       if (activeRunsResult.status === "fulfilled") {
         setActiveRuns(activeRunsResult.value.data);
         setIsRunning(activeRunsResult.value.data.length > 0);
-      } else {
-        setActiveRuns([]);
-        setIsRunning(false);
       }
       setAccountError(
         accountResult.status === "rejected"
@@ -536,20 +641,16 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       );
 
       const currentPreferences = preferencesRef.current;
-      const workspace =
-        workspaceResponse?.data.find((entry) => entry.path === currentPreferences.selectedWorkspacePath) ??
-        workspaceResponse?.data.find((entry) => entry.exists) ??
-        workspaceResponse?.data[0] ??
-        null;
-
-      setSelectedWorkspaceState(workspace);
-      if (workspace) {
-        updatePreferences({ selectedWorkspacePath: workspace.path });
-        await loadThreadsForWorkspace(workspace.path, currentPreferences.selectedThreadId);
-      } else {
-        setThreads([]);
-        setSelectedThread(null);
-        setMessages([]);
+      if (workspaceResponse) {
+        const workspace =
+          workspaceResponse.data.find((entry) => entry.path === currentPreferences.selectedWorkspacePath) ??
+          workspaceResponse.data.find((entry) => entry.exists) ??
+          workspaceResponse.data[0] ?? null;
+        setSelectedWorkspaceState(workspace);
+        if (workspace) {
+          updatePreferences({ selectedWorkspacePath: workspace.path });
+          await loadThreadsForWorkspace(workspace.path, currentPreferences.selectedThreadId);
+        }
       }
 
       const configModel = readConfigString(configResponse, "model");
@@ -602,12 +703,6 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       mounted = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!isBooting) {
-      void refreshAll();
-    }
-  }, [isBooting, refreshAll]);
 
   const refreshWorkspaces = useCallback(async () => {
     setIsRefreshing(true);
@@ -663,6 +758,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
 
   const selectWorkspace = useCallback(
     async (workspace: WorkspaceEntry) => {
+      contextGeneration.current += 1;
       composingNewThreadRef.current = false;
       nextThreadContentRequest();
       detachActiveStream();
@@ -681,6 +777,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   );
 
   const selectThread = useCallback(async (thread: BridgeThread) => {
+    contextGeneration.current += 1;
     composingNewThreadRef.current = false;
     nextThreadContentRequest();
     detachActiveStream();
@@ -907,6 +1004,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   );
 
   const createNewThread = useCallback(async () => {
+    contextGeneration.current += 1;
     if (!selectedWorkspace) {
       setError("No repository selected.");
       return;
@@ -964,9 +1062,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
   const sendMessage = useCallback(
     async (message: string, inputItems: RunInputItem[] = []) => {
       const cleanMessage = message.trim();
-      if (!cleanMessage || isRunning || isComposerLocked || !selectedWorkspace) {
-        return;
+      if (!cleanMessage || isRunning || isComposerLocked || !selectedWorkspace || pendingSubmission.current ||
+          isUploadingAttachmentRef.current || failedUploadFiles.length > 0 ||
+          inputItems.some((item) => item.type === "attachment" && !pendingAttachments.some((attachment) => attachment.id === item.id))) {
+        return { status: "rejected" as const };
       }
+      const requestId = createId("request");
 
       setError(null);
       setPendingApprovals([]);
@@ -994,7 +1095,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       activeUserMessageId.current = userMessage.id;
       const abortController = new AbortController();
       activeAbortController.current = abortController;
-      let runFailed = false;
+      let outcome: "accepted" | "rejected" | "uncertain" = "rejected";
+      let acceptedRunActive = false;
 
       try {
         const thread = selectedThreadRef.current ?? (await createPersistedThread());
@@ -1009,13 +1111,16 @@ export function BridgeProvider({ children }: PropsWithChildren) {
               )
             );
           }
-          return;
+          return { status: "rejected" as const, requestId };
         }
         if (abortController.signal.aborted) {
-          return;
+          return { status: "rejected" as const, requestId };
         }
 
         activeRunThreadId.current = thread.id;
+        const submissionGeneration = contextGeneration.current;
+        pendingSubmission.current = { threadId: thread.id, requestId, message: cleanMessage, assistantMessageId, userMessageId: userMessage.id,
+          attachmentIds: inputItems.filter((item) => item.type === "attachment").map((item) => item.id) };
         setMessages((current) =>
           current.some((item) => item.id === assistantMessageId)
             ? current
@@ -1024,6 +1129,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
 
         const runBody = {
           message: cleanMessage,
+          client_request_id: requestId,
           cwd: selectedWorkspace.path,
           model_reasoning_effort: preferences.reasoningEffort,
           approval_policy: preferences.approvalPolicy,
@@ -1040,48 +1146,55 @@ export function BridgeProvider({ children }: PropsWithChildren) {
               }
             : runBody;
 
-        await client.streamRun(
-          thread.id,
-          requestBody,
-          (event) => {
-            if (event.event === "error") {
-              runFailed = true;
-            }
-            if (event.event === "done" && isFailedStatus((event.data as Record<string, unknown>).status)) {
-              runFailed = true;
-            }
-            handleRunEvent(event, assistantMessageId, userMessage.id);
-          },
-          abortController.signal
-        );
-        await loadThreadsForWorkspace(selectedWorkspace.path, thread.id);
-        setMessages((current) =>
-          setLatestUserMessageDeliveryStatus(
-            current,
-            cleanMessage,
-            runFailed ? "failed" : "sent",
-            runFailed ? "Run failed." : undefined
-          )
-        );
+        const { run } = await client.startRun(thread.id, requestBody, abortController.signal);
+        if (submissionGeneration !== contextGeneration.current || selectedThreadRef.current?.id !== thread.id) {
+          outcome = "uncertain";
+          return { status: "uncertain" as const, requestId };
+        }
+        outcome = "accepted";
+        acceptedRunActive = isActiveRunStatus(run.status);
+        pendingSubmission.current = null;
+        activeRunId.current = run.run_id;
+        assistantMessageIdByRun.current.set(run.run_id, assistantMessageId);
+        setMessages((current) => current.map((item) =>
+          item.id === userMessage.id ? { ...item, turnId: run.run_id, deliveryStatus: "sent" }
+            : item.id === assistantMessageId ? { ...item, turnId: run.run_id } : item
+        ));
+        setActiveRuns((current) => acceptedRunActive
+          ? [run, ...current.filter((item) => item.run_id !== run.run_id)]
+          : current.filter((item) => item.run_id !== run.run_id));
+        setLastConfirmedRequestId(requestId);
+        setPendingAttachments((current) => current.filter((attachment) =>
+          !inputItems.some((item) => item.type === "attachment" && item.id === attachment.id)));
+        void loadThreadsForWorkspace(selectedWorkspace.path, thread.id);
+        return { status: "accepted" as const, requestId };
       } catch (caught) {
+        if (abortController.signal.aborted && pendingSubmission.current?.requestId === requestId) {
+          outcome = "uncertain";
+          return { status: "uncertain" as const, requestId };
+        }
         if (!abortController.signal.aborted) {
           const message = errorMessage(caught);
           setError(message);
-          setMessages((current) =>
-            setMessageDeliveryStatus(current, userMessage.id, "failed", message)
-          );
-          markAssistantFailed(assistantMessageId, message);
+          const httpError = caught as BridgeRequestError;
+          if (httpError.status) {
+            pendingSubmission.current = null;
+            setMessages((current) => current.filter((item) => item.id !== userMessage.id && item.id !== assistantMessageId));
+            outcome = "rejected";
+          } else {
+            outcome = "uncertain";
+            setError("Submission outcome is unknown. The Bridge will be checked before another send.");
+            connectionControllerRef.current?.markRequestFailure();
+          }
         }
+        return { status: outcome, requestId };
       } finally {
         const detached = detachedAbortControllers.current.delete(abortController);
         if (!detached) {
-          setIsComposerLocked(false);
-          setIsRunning(false);
+          setIsComposerLocked(outcome === "uncertain" || (outcome === "accepted" && acceptedRunActive));
+          setIsRunning(outcome === "accepted" && acceptedRunActive);
           activeAbortController.current = null;
-          activeRunId.current = null;
-          activeRunThreadId.current = null;
           activeUserMessageId.current = null;
-          attachedRunId.current = null;
         }
       }
     },
@@ -1090,6 +1203,8 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       createPersistedThread,
       isComposerLocked,
       isRunning,
+      failedUploadFiles.length,
+      pendingAttachments,
       loadThreadsForWorkspace,
       preferences.approvalPolicy,
       preferences.networkAccessEnabled,
@@ -1289,6 +1404,7 @@ export function BridgeProvider({ children }: PropsWithChildren) {
         setActiveRuns((current) => current.filter((run) => run.run_id !== runId));
       }
       setIsRunning(false);
+      setIsComposerLocked(false);
       activeRunId.current = null;
       activeRunThreadId.current = null;
       attachedRunId.current = null;
@@ -1301,50 +1417,167 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
+  const reconcileRun = useCallback(async () => {
+    if (recoveryInFlight.current) return;
+    recoveryInFlight.current = true;
+    const generation = contextGeneration.current;
+    const thread = selectedThreadRef.current;
+    try {
+      const pending = pendingSubmission.current;
+      if (pending) {
+        try {
+          const request = await client.getRunRequest(pending.threadId, pending.requestId);
+          if (generation !== contextGeneration.current) return;
+          if (selectedThreadRef.current?.id !== pending.threadId) return;
+          if (request.run) {
+            const run = request.run;
+            pendingSubmission.current = null;
+            activeRunId.current = run.run_id;
+            activeRunThreadId.current = run.thread_id;
+            assistantMessageIdByRun.current.set(run.run_id, pending.assistantMessageId);
+            setMessages((current) => current.map((item) =>
+              item.id === pending.userMessageId ? { ...item, turnId: run.run_id, deliveryStatus: "sent" }
+                : item.id === pending.assistantMessageId ? { ...item, turnId: run.run_id } : item));
+            setLastConfirmedRequestId(pending.requestId);
+            setPendingAttachments((current) => current.filter((attachment) => !pending.attachmentIds.includes(attachment.id)));
+            setIsComposerLocked(isActiveRunStatus(run.status));
+            setIsRunning(isActiveRunStatus(run.status));
+          }
+        } catch (error) {
+          if ((error as BridgeRequestError).status !== 404) throw error;
+          // A missing in-memory request record after restart is inconclusive.
+        }
+      }
+      const active = await client.listActiveRuns(thread ? { threadId: thread.id } : {});
+      if (generation !== contextGeneration.current || selectedThreadRef.current?.id !== thread?.id) return;
+      setActiveRuns((current) => [
+        ...active.data,
+        ...current.filter((run) => thread && run.thread_id !== thread.id)
+      ]);
+      const currentRun = active.data.find((run) => run.thread_id === thread?.id);
+      if (currentRun) {
+        activeRunId.current = currentRun.run_id;
+        activeRunThreadId.current = currentRun.thread_id;
+        setIsRunning(true);
+        setIsComposerLocked(true);
+        if (!attachedRunId.current && !replayGapRuns.current.has(currentRun.run_id)) {
+          setReattachGeneration((value) => value + 1);
+        }
+        return;
+      }
+      const runId = activeRunId.current;
+      if (!runId || !thread || activeRunThreadId.current !== thread.id) return;
+      let terminal = false;
+      try {
+        const { run } = await client.getRun(runId);
+        terminal = !isActiveRunStatus(run.status);
+      } catch (error) {
+        if ((error as BridgeRequestError).status !== 404) throw error;
+      }
+      if (generation !== contextGeneration.current || selectedThreadRef.current?.id !== thread.id) return;
+      const response = await client.getThread(thread.id, { includeTurns: true });
+      if (generation !== contextGeneration.current || selectedThreadRef.current?.id !== thread.id) return;
+      const turn = (response.thread.turns ?? []).find((value) =>
+        value && typeof value === "object" && (value as { id?: unknown }).id === runId) as { status?: unknown } | undefined;
+      const transcriptTerminal = turn?.status === "completed" || turn?.status === "failed" || turn?.status === "interrupted" || turn?.status === "cancelled";
+      if (terminal || transcriptTerminal) {
+        setMessages(messagesFromThread(response.thread));
+        setSelectedThread(response.thread);
+        activeRunId.current = null;
+        activeRunThreadId.current = null;
+        attachedRunId.current = null;
+        replayGapRuns.current.delete(runId);
+        lastEventSeqByRun.current.delete(runId);
+        assistantMessageIdByRun.current.delete(runId);
+        setIsRunning(false);
+        setIsComposerLocked(false);
+      } else {
+        setError("The run result is unresolved. Check the conversation before sending again.");
+      }
+    } catch {
+      connectionControllerRef.current?.markRequestFailure();
+    } finally {
+      recoveryInFlight.current = false;
+    }
+  }, [client, setSelectedThread]);
+
+  const attachableRun = pickAttachableRun(activeRuns, selectedThread?.id);
+  const attachableRunId = attachableRun?.id ?? null;
+  const attachableRunThreadId = attachableRun?.threadId ?? null;
+
   useEffect(() => {
-    const run = activeRuns.find(
-      (item) => item.thread_id === selectedThread?.id && isActiveRunStatus(item.status)
-    );
-    if (!run || attachedRunId.current === run.run_id) {
+    if (!attachableRunId || !attachableRunThreadId || attachedRunId.current === attachableRunId) {
       return;
     }
-
-    const assistantMessageId = `assistant_${run.run_id}`;
+    const runId = attachableRunId;
+    const threadId = attachableRunThreadId;
+    const generation = contextGeneration.current;
+    if (replayGapRuns.current.has(runId)) return;
+    const assistantMessageId = assistantMessageIdByRun.current.get(runId) ??
+      messagesRef.current.find((message) => message.turnId === runId && message.role === "assistant")?.id ??
+      `assistant_${runId}`;
+    assistantMessageIdByRun.current.set(runId, assistantMessageId);
     setMessages((current) =>
       current.some((item) => item.id === assistantMessageId)
         ? current
-        : [...current, { id: assistantMessageId, role: "assistant", text: "", parts: [], pending: true }]
+        : [...current, { id: assistantMessageId, turnId: runId, role: "assistant", text: "", parts: [], pending: true }]
     );
 
     const abortController = new AbortController();
     activeAbortController.current = abortController;
-    activeRunId.current = run.run_id;
-    activeRunThreadId.current = run.thread_id;
-    attachedRunId.current = run.run_id;
+    activeRunId.current = runId;
+    activeRunThreadId.current = threadId;
+    attachedRunId.current = runId;
+    streamLastSeenAt.current = Date.now();
     setIsRunning(true);
     setIsComposerLocked(true);
 
     void client
       .streamRunEvents(
-        run.run_id,
-        (event) => handleRunEvent(event, assistantMessageId),
+        runId,
+        (event) => {
+          if (abortController.signal.aborted || generation !== contextGeneration.current || selectedThreadRef.current?.id !== threadId) return;
+          streamLastSeenAt.current = Date.now();
+          const decision = decideRunEvent(event, runId, threadId, lastEventSeqByRun.current.get(runId) ?? 0);
+          if (decision === "heartbeat" || decision === "duplicate") return;
+          if (decision !== "accept") {
+            if (decision === "gap" || decision === "invalid") {
+              replayGapRuns.current.add(runId);
+              setError("Live events are incomplete. The transcript will be reloaded when the run finishes.");
+            }
+            abortController.abort();
+            attachedRunId.current = null;
+            void reconcileRun();
+            return;
+          }
+          handleRunEvent(event, assistantMessageId);
+          lastEventSeqByRun.current.set(runId, (event.data as { event_seq: number }).event_seq);
+          if (event.event === "done" && selectedThreadRef.current?.id === threadId) {
+            void loadThreadContent(selectedThreadRef.current);
+            lastEventSeqByRun.current.delete(runId);
+            assistantMessageIdByRun.current.delete(runId);
+            replayGapRuns.current.delete(runId);
+          }
+        },
         abortController.signal,
-        0
+        lastEventSeqByRun.current.get(runId) ?? 0
       )
       .catch((caught) => {
         if (!abortController.signal.aborted) {
-          setError(errorMessage(caught));
-          markAssistantFailed(assistantMessageId, errorMessage(caught));
+          if ((caught as BridgeRequestError).code === "replay_gap") {
+            replayGapRuns.current.add(runId);
+            setError("Live event history has a gap. The transcript will be reloaded when the run finishes.");
+          } else if ((caught as BridgeRequestError).status !== 404) {
+            setError(errorMessage(caught));
+            connectionControllerRef.current?.markRequestFailure();
+          }
         }
       })
       .finally(() => {
         const detached = detachedAbortControllers.current.delete(abortController);
-        if (!detached && activeRunId.current === run.run_id) {
-          setIsComposerLocked(false);
-          activeAbortController.current = null;
-          activeRunId.current = null;
-          activeRunThreadId.current = null;
+        if (!detached && attachedRunId.current === runId) {
           attachedRunId.current = null;
+          connectionControllerRef.current?.markRequestFailure();
         }
       });
 
@@ -1354,12 +1587,69 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       if (activeAbortController.current === abortController) {
         activeAbortController.current = null;
       }
-      if (attachedRunId.current === run.run_id) {
+      if (attachedRunId.current === runId) {
         attachedRunId.current = null;
       }
-      setIsComposerLocked(false);
     };
-  }, [activeRuns, client, handleRunEvent, selectedThread?.id]);
+  }, [attachableRunId, attachableRunThreadId, client, handleRunEvent, loadThreadContent, reattachGeneration, reconcileRun]);
+
+  const refreshAllRef = useRef(refreshAll);
+  refreshAllRef.current = refreshAll;
+  const reconcileRunRef = useRef(reconcileRun);
+  reconcileRunRef.current = reconcileRun;
+
+  useEffect(() => {
+    if (isBooting) return;
+    contextGeneration.current += 1;
+    detachActiveStream();
+    lastEventSeqByRun.current.clear();
+    assistantMessageIdByRun.current.clear();
+    replayGapRuns.current.clear();
+    setConnectionStatus("connecting");
+    const controller = new BridgeConnectionController(client, setConnectionStatus, () => {
+      void (async () => {
+        await refreshAllRef.current();
+        await reconcileRunRef.current();
+      })();
+    });
+    connectionControllerRef.current = controller;
+    controller.start();
+    const subscription = AppState.addEventListener("change", (state) => {
+      controller.setForeground(state === "active");
+      if (state === "active" && activeRunId.current) {
+        detachActiveStream();
+        void reconcileRunRef.current();
+      }
+    });
+    return () => {
+      subscription.remove();
+      controller.stop();
+      if (connectionControllerRef.current === controller) connectionControllerRef.current = null;
+      detachActiveStream();
+    };
+  }, [client, detachActiveStream, isBooting]);
+
+  useEffect(() => {
+    if (connectionStatus !== "connected" || (!isRunning && !isComposerLocked)) return;
+    const timer = setInterval(() => {
+      if (AppState.currentState !== "active") return;
+      if (pendingSubmission.current) {
+        void reconcileRun();
+        return;
+      }
+      if (!activeRunId.current) return;
+      const staleAfter = 3 * (capabilities.sse_heartbeat_ms ?? 15000) + 5000;
+      if (attachedRunId.current) {
+        if (Date.now() - streamLastSeenAt.current > staleAfter) {
+          detachActiveStream();
+          void reconcileRun();
+        }
+      } else {
+        void reconcileRun();
+      }
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [capabilities.sse_heartbeat_ms, connectionStatus, detachActiveStream, isComposerLocked, isRunning, reconcileRun]);
 
   const addOrUpdateActivity = useCallback((activity: ActivityItem) => {
     setActivities((current) => {
@@ -1462,25 +1752,16 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     const threadId = selectedRun?.thread_id ?? activeRunThreadId.current ?? selectedThread?.id;
     const runId = selectedRun?.run_id ?? activeRunId.current;
 
-    activeAbortController.current?.abort();
-    if (activeUserMessageId.current) {
-      setMessages((current) =>
-        setMessageDeliveryStatus(current, activeUserMessageId.current, "failed", "Cancelled.")
-      );
+    if (!threadId || !runId) return;
+    try {
+      const result = await client.cancelRun(threadId, runId);
+      if (!result.cancelled) setError("The run could not be cancelled; its status will be checked.");
+      void reconcileRun();
+    } catch (error) {
+      setError(`Cancellation outcome is unknown: ${errorMessage(error)}`);
+      connectionControllerRef.current?.markRequestFailure();
     }
-    if (threadId && runId) {
-      await client.cancelRun(threadId, runId).catch(() => null);
-    }
-    if (runId) {
-      setActiveRuns((current) => current.filter((run) => run.run_id !== runId));
-    }
-    setIsComposerLocked(false);
-    setIsRunning(false);
-    activeRunId.current = null;
-    activeRunThreadId.current = null;
-    activeUserMessageId.current = null;
-    attachedRunId.current = null;
-  }, [activeRuns, client, selectedThread?.id]);
+  }, [activeRuns, client, reconcileRun, selectedThread?.id]);
 
   const respondApproval = useCallback(
     async (approval: PendingApproval, decision: string) => {
@@ -1551,6 +1832,12 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       activities,
       pendingApprovals,
       activeRuns,
+      connectionStatus,
+      pendingAttachments,
+      isUploadingAttachment,
+      failedUploadCount: failedUploadFiles.length,
+      lastConfirmedRequestId,
+      hasUncertainSubmission: Boolean(pendingSubmission.current),
       runningThreadId: activeRuns[0]?.thread_id ?? activeRunThreadId.current,
       isBooting,
       isRefreshing,
@@ -1592,6 +1879,11 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       restoreWorkspace,
       createNewThread,
       sendMessage,
+      pickAttachment,
+      retryPendingUploads,
+      clearFailedUploads,
+      removePendingAttachment,
+      clearUncertainSubmission,
       cancelRun,
       respondApproval,
       saveCodexDefaults
@@ -1599,6 +1891,11 @@ export function BridgeProvider({ children }: PropsWithChildren) {
     [
       activities,
       activeRuns,
+      connectionStatus,
+      pendingAttachments,
+      isUploadingAttachment,
+      failedUploadFiles.length,
+      lastConfirmedRequestId,
       allowlistFile,
       account,
       accountError,
@@ -1647,6 +1944,11 @@ export function BridgeProvider({ children }: PropsWithChildren) {
       selectThread,
       selectWorkspace,
       sendMessage,
+      pickAttachment,
+      retryPendingUploads,
+      clearFailedUploads,
+      removePendingAttachment,
+      clearUncertainSubmission,
       selectedThread,
       selectedWorkspace,
       skills,

@@ -36,6 +36,8 @@ export type DirectoryChildrenResponse = {
 };
 
 export type BridgeCapabilities = {
+  sse_heartbeat_ms?: number;
+  uploads?: { enabled: boolean; max_bytes: number; max_files?: number };
   threads: {
     rename: boolean;
     archive: boolean;
@@ -83,6 +85,14 @@ export type BridgeRunSummary = {
   updated_at: string;
   last_event_seq: number;
   error?: string | null;
+};
+
+export type UploadedAttachment = {
+  id: string;
+  name: string;
+  size: number;
+  kind: "image" | "file";
+  created_at: string;
 };
 
 export type ThreadArchiveResponse = {
@@ -272,10 +282,16 @@ export type RunInputItem =
       uri: string;
       name?: string;
       title?: string;
+    }
+  | {
+      type: "attachment";
+      id: string;
+      name: string;
     };
 
 export type RunStreamBody = {
   message: string;
+  client_request_id?: string;
   cwd?: string;
   approval_policy?: ApprovalPolicy;
   sandbox_mode?: SandboxMode;
@@ -327,6 +343,7 @@ export type ChatMessagePart = ChatTextPart | ChatActivityPart | ChatApprovalPart
 
 export type ChatMessage = {
   id: string;
+  turnId?: string;
   role: ChatRole;
   text: string;
   pending?: boolean;
