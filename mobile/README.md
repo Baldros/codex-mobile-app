@@ -91,7 +91,10 @@ npm run web
 - Selecao de repositorio (`GET /v1/workspaces`), com navegador de pastas (`GET /v1/filesystem/roots|children`) e adicionar/remover da allowlist (`POST /v1/workspaces/add|remove|restore`).
 - Selecao de modelo, reasoning effort e service tier (`GET /v1/settings/models`).
 - Gestao de conversas (`GET /v1/threads?cwd=...`), incluindo renomear e arquivar.
-- Chat em streaming (`POST /v1/threads/:id/runs/stream`) com renderizacao Markdown.
+- Chat em streaming com inicio idempotente (`POST /v1/threads/:id/runs`) e observacao SSE retomavel (`GET /v1/runs/:id/events/stream`).
+- Reconexao automatica do Bridge e recuperacao de runs apos perda de rede ou retorno do background.
+- Copia da resposta, selecao nativa de texto e rolagem que respeita a leitura de mensagens anteriores.
+- Anexos pelo seletor do Android quando o Bridge anuncia `uploads.enabled`; ate cinco arquivos por mensagem.
 - Timeline estruturada de atividade, ferramentas e aprovacoes human-in-the-loop, com cancelamento.
 - Mentions estruturadas no composer (`$app` / `$skill` / `$mcp`) e navegacao de recursos MCP.
 - Limites de conta e presets de modo de execucao (sandbox, approval policy, network).
@@ -103,6 +106,8 @@ npm run web
   - `src/screens/home/` e `src/screens/settings/`: subcomponentes e `styles.ts` de cada tela grande.
 - `src/components/`: componentes reutilizaveis (`IconAction`, `MarkdownText`, `Screen`, ...).
 - `src/state/BridgeProvider.tsx`: estado central e cliente do bridge (contexto React, hook `useBridge`).
+- `src/state/BridgeConnectionController.ts`: sondagem de conectividade, timeout e backoff.
+- `src/screens/home/useStickyChatScroll.ts`: seguimento do final da conversa e posicionamento apos layout.
 - `src/domain/`: tipos e logica de dominio (tipos do bridge, mentions, partes de mensagem, parsing de historico, opcoes do composer).
 - `src/api/`: cliente HTTP/SSE.
 - `src/config/`, `src/storage/`, `src/theme/`, `src/utils/`: build config, preferencias, tema e utilidades.

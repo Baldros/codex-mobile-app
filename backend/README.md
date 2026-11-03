@@ -25,6 +25,7 @@ cria uma conversa real no historico nativo do Codex e confere o `cwd` da sessao.
 - `src/runtime/`: adapter `sdk` e o mapeamento de eventos do SDK.
 - `test/support/`: doubles isolados usados somente pela suite de testes.
 - `src/runs/`: registro de runs ativos, replay e reanexacao de eventos (`RunRegistry`).
+- `src/uploads/`: armazenamento temporario de anexos com IDs emitidos pelo Bridge.
 - `src/threads/`: servico e store de conversas.
 - `src/workspaces/`: allowlist de workspaces.
 
@@ -77,6 +78,12 @@ Runs
 - `GET /v1/runs/active` (`?thread_id=` / `?cwd=`)
 - `GET /v1/runs/:runId`
 - `GET /v1/runs/:runId/events/stream` (SSE: reanexa a um run em andamento, `?since_seq=`)
+- `GET /v1/threads/:threadId/runs/requests/:requestId` (reconcilia um POST com resposta perdida)
+
+Uploads (`app-server` quando habilitado)
+
+- `POST /v1/uploads` (Base64; devolve ID opaco)
+- `DELETE /v1/uploads/:id` (remove anexo ainda nao usado)
 
 Workspaces
 
@@ -139,3 +146,14 @@ LAN.
 autenticado somado ao endereco de bind, e o servidor responde com
 `Access-Control-Allow-Origin: *`. Nunca vincule a um endereco publico e nunca
 encaminhe a porta `8787` em roteador.
+
+## Retencao e anexos
+
+- `CODEX_BRIDGE_RUN_BUFFER_EVENTS` limita o historico por run (padrao: 5000).
+- `CODEX_BRIDGE_RUN_RETENTION_MS` retém runs terminadas em memoria (padrao: 300000 ms). Reiniciar o Bridge elimina esse registro; o mobile consulta a conversa persistida.
+- `CODEX_BRIDGE_UPLOAD_DIR` define o diretorio privado (padrao: `~/.codex-mobile/uploads`).
+- `CODEX_BRIDGE_UPLOAD_MAX_BYTES` limita cada arquivo a 15 MiB; `CODEX_BRIDGE_UPLOAD_TOTAL_MAX_BYTES` limita o armazenamento a 512 MiB. Anexos sem uso expiram em 24 horas.
+- Uploads ficam disponiveis automaticamente apenas no loopback com runtime `app-server`. Para um endereco WireGuard especifico, use `CODEX_BRIDGE_UPLOADS_ENABLED=true` somente depois de verificar o bind privado. `scripts/start_codex_bridge.ps1` faz essa verificacao antes de habilitar uploads. O bind wildcard nunca habilita uploads.
+
+O runtime SDK nao anuncia anexos. O Bridge nao altera sandbox, politica de aprovacao ou allowlist para ler arquivos enviados.
+As decisoes de recuperacao e limites de seguranca estao em [RELIABILITY_ATTACHMENTS.md](../RELIABILITY_ATTACHMENTS.md).
