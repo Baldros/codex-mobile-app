@@ -1,4 +1,6 @@
 import { createServer, type Server } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +11,7 @@ import type { RuntimeThreadOptions } from "../src/runtime/types.js";
 import { InMemoryThreadStore } from "../src/threads/InMemoryThreadStore.js";
 import { ThreadService } from "../src/threads/ThreadService.js";
 import { FakeCodexRuntime } from "./support/FakeCodexRuntime.js";
+import { UploadService } from "../src/uploads/UploadService.js";
 
 describe("Codex bridge HTTP API", () => {
   let server: Server;
@@ -28,7 +31,7 @@ describe("Codex bridge HTTP API", () => {
   });
 
   afterEach(async () => {
-    await close(server);
+    if (server.listening) await close(server);
   });
 
   it("returns health for the configured runtime", async () => {
@@ -143,6 +146,76 @@ describe("Codex bridge HTTP API", () => {
       "done"
     ]);
     expect(events.at(-1)?.data).toMatchObject({ status: "completed" });
+  });
+
+  it("keeps a run request idempotent and reports replay gaps through HTTP", async () => {
+    await close(server);
+    const config = testConfig({ runBufferEvents: 2 });
+    server = createServer(createApp({
+      config,
+      threadService: new ThreadService({ config, runtime, store: new InMemoryThreadStore() })
+    }));
+    baseUrl = await listen(server);
+    const { thread } = await createThread(baseUrl, { workspace: process.cwd() });
+    const body = JSON.stringify({ message: "one execution", client_request_id: "request_http_123" });
+    const first = await fetch(`${baseUrl}/v1/threads/${thread.id}/runs`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body
+    });
+    const firstRun = (await first.json()) as { run: { run_id: string } };
+    const second = await fetch(`${baseUrl}/v1/threads/${thread.id}/runs`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body
+    });
+    const secondRun = (await second.json()) as { run: { run_id: string } };
+    expect(first.status).toBe(202);
+    expect(second.status).toBe(202);
+    expect(secondRun.run.run_id).toBe(firstRun.run.run_id);
+
+    await vi.waitFor(async () => {
+      const response = await fetch(`${baseUrl}/v1/runs/${encodeURIComponent(firstRun.run.run_id)}`);
+      const result = (await response.json()) as { run: { status: string } };
+      expect(result.run.status).toBe("completed");
+    });
+
+    const request = await fetch(`${baseUrl}/v1/threads/${thread.id}/runs/requests/request_http_123`);
+    expect((await request.json()) as { run: { run_id: string } }).toMatchObject({
+      run: { run_id: firstRun.run.run_id }
+    });
+    const gap = await fetch(`${baseUrl}/v1/runs/${encodeURIComponent(firstRun.run.run_id)}/events/stream?since_seq=0`);
+    expect(gap.status).toBe(409);
+    expect(await gap.json()).toMatchObject({ error: {
+      code: "replay_gap", details: { run_id: firstRun.run.run_id, requested_since_seq: 0 }
+    } });
+  });
+
+  it("accepts only opaque upload references and denies browser-origin uploads", async () => {
+    await close(server);
+    const uploadDir = mkdtempSync(path.join(tmpdir(), "codex-upload-http-"));
+    const uploads = new UploadService({ uploadDir, maxBytes: 1024, totalMaxBytes: 4096 });
+    try {
+      server = createServer(createApp({ config: testConfig({ uploadMaxBytes: 1024 }), uploadService: uploads,
+        threadService: new ThreadService({ config: testConfig(), runtime, store: new InMemoryThreadStore() }) }));
+      baseUrl = await listen(server);
+      const refused = await fetch(`${baseUrl}/v1/uploads`, { method: "POST",
+        headers: { Origin: "http://untrusted.example", "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "notes.txt", data_base64: "aGk=" }) });
+      expect(refused.status).toBe(403);
+      const accepted = await fetch(`${baseUrl}/v1/uploads`, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "../notes.txt", data_base64: "aGk=" }) });
+      expect(accepted.status).toBe(201);
+      const result = (await accepted.json()) as { attachment: { id: string; name: string; path?: string } };
+      expect(result.attachment).toMatchObject({ name: "notes.txt" });
+      expect(result.attachment.id).toMatch(/^upload_/);
+      expect(result.attachment.path).toBeUndefined();
+      const invalid = await fetch(`${baseUrl}/v1/uploads/${encodeURIComponent("../secret")}`, { method: "DELETE" });
+      expect(invalid.status).toBe(400);
+      const removed = await fetch(`${baseUrl}/v1/uploads/${result.attachment.id}`, { method: "DELETE" });
+      expect(removed.status).toBe(204);
+    } finally {
+      await close(server);
+      uploads.dispose();
+      rmSync(uploadDir, { recursive: true, force: true });
+    }
   });
 
   it("passes execution settings to the runtime", async () => {
@@ -447,6 +520,12 @@ function testConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
     defaultSkipGitRepoCheck: true,
     defaultModel: null,
     heartbeatMs: 15000,
+    runBufferEvents: 5000,
+    runRetentionMs: 300000,
+    uploadDir: "__test_uploads__",
+    uploadMaxBytes: 15 * 1024 * 1024,
+    uploadTotalMaxBytes: 512 * 1024 * 1024,
+    uploadsEnabled: false,
     version: "test"
   };
   return Object.assign(config, overrides);

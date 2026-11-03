@@ -93,6 +93,7 @@ $previousEnvironment = @{
     CODEX_BRIDGE_HOST = $env:CODEX_BRIDGE_HOST
     CODEX_BRIDGE_PORT = $env:CODEX_BRIDGE_PORT
     CODEX_BRIDGE_RUNTIME = $env:CODEX_BRIDGE_RUNTIME
+    CODEX_BRIDGE_UPLOADS_ENABLED = $env:CODEX_BRIDGE_UPLOADS_ENABLED
 }
 
 try {
@@ -100,6 +101,8 @@ try {
     $env:CODEX_BRIDGE_HOST = $BindHost
     $env:CODEX_BRIDGE_PORT = [string]$Port
     $env:CODEX_BRIDGE_RUNTIME = $Runtime
+    # The bind address was verified on the named WireGuard interface above.
+    $env:CODEX_BRIDGE_UPLOADS_ENABLED = if ($Runtime -eq "app-server") { "true" } else { "false" }
 
     Push-Location $BackendDir
     try {

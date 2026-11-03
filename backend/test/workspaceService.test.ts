@@ -152,6 +152,12 @@ function testConfig(defaultWorkspace: string, workspaceAllowlistFile: string): B
     defaultSkipGitRepoCheck: true,
     defaultModel: null,
     heartbeatMs: 15000,
+    runBufferEvents: 5000,
+    runRetentionMs: 300000,
+    uploadDir: "__test_uploads__",
+    uploadMaxBytes: 15 * 1024 * 1024,
+    uploadTotalMaxBytes: 512 * 1024 * 1024,
+    uploadsEnabled: false,
     version: "test"
   };
 }

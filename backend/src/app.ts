@@ -12,6 +12,7 @@ import { RunRegistry } from "./runs/RunRegistry.js";
 import { SseWriter } from "./sse.js";
 import { InMemoryThreadStore } from "./threads/InMemoryThreadStore.js";
 import { ThreadService } from "./threads/ThreadService.js";
+import { UploadService } from "./uploads/UploadService.js";
 import { WorkspaceService } from "./workspaces/WorkspaceService.js";
 import {
   ArchiveThreadBodySchema,
@@ -21,8 +22,10 @@ import {
   McpResourceReadBodySchema,
   RenameThreadBodySchema,
   RunStreamBodySchema,
+  UploadBodySchema,
   WorkspacePathBodySchema,
-  WriteConfigBodySchema
+  WriteConfigBodySchema,
+  type RunStreamBody
 } from "./validation.js";
 
 export type AppDependencies = {
@@ -32,30 +35,43 @@ export type AppDependencies = {
   workspaceService?: WorkspaceService;
   fileSystemService?: FileSystemService;
   appServerClient?: AppServerClient;
+  uploadService?: UploadService;
 };
 
 export function createApp(deps: AppDependencies = {}) {
   const config = deps.config ?? getBridgeConfig();
   const workspaceService = deps.workspaceService ?? new WorkspaceService(config);
+  const uploadService = deps.uploadService ?? (config.uploadsEnabled && config.runtime === "app-server"
+    ? new UploadService({ uploadDir: config.uploadDir, maxBytes: config.uploadMaxBytes, totalMaxBytes: config.uploadTotalMaxBytes })
+    : null);
   const threadService =
     deps.threadService ??
-    createDefaultThreadService(config, workspaceService, deps.appServerClient);
-  const runRegistry = deps.runRegistry ?? new RunRegistry(threadService);
+    createDefaultThreadService(config, workspaceService, deps.appServerClient, uploadService);
+  const runRegistry = deps.runRegistry ?? new RunRegistry(threadService, {
+    maxBufferedEvents: config.runBufferEvents,
+    runRetentionMs: config.runRetentionMs
+  });
   const fileSystemService = deps.fileSystemService ?? new FileSystemService();
 
-  return async function handleRequest(req: IncomingMessage, res: ServerResponse) {
+  const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     applyCorsHeaders(res);
 
     try {
-      await routeRequest(req, res, config, threadService, runRegistry, workspaceService, fileSystemService);
+      await routeRequest(req, res, config, threadService, runRegistry, workspaceService, fileSystemService, uploadService);
     } catch (error) {
       sendError(res, error);
     }
   };
+  return Object.assign(handleRequest, {
+    dispose: () => { runRegistry.dispose(); uploadService?.dispose(); }
+  });
 }
 
 export function createBridgeServer(deps: AppDependencies = {}) {
-  return createServer(createApp(deps));
+  const app = createApp(deps);
+  const server = createServer(app);
+  server.on("close", app.dispose);
+  return server;
 }
 
 async function routeRequest(
@@ -65,7 +81,8 @@ async function routeRequest(
   threadService: BridgeThreadService,
   runRegistry: RunRegistry,
   workspaceService: WorkspaceService,
-  fileSystemService: FileSystemService
+  fileSystemService: FileSystemService,
+  uploadService: UploadService | null
 ) {
   const method = req.method ?? "GET";
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -85,7 +102,7 @@ async function routeRequest(
   }
 
   if (method === "GET" && pathname === "/v1/capabilities") {
-    sendJson(res, 200, buildCapabilitiesResponse(threadService, workspaceService));
+    sendJson(res, 200, buildCapabilitiesResponse(config, threadService, workspaceService, uploadService));
     return;
   }
 
@@ -140,11 +157,12 @@ async function routeRequest(
   if (method === "POST" && runStreamMatch) {
     const threadId = decodeURIComponent(runStreamMatch[1]!);
     const body = RunStreamBodySchema.parse(await readJson(req));
+    assertAttachmentsAllowed(body, uploadService);
     const run = await runRegistry.startRun(threadId, body);
     if (res.destroyed) {
       return;
     }
-    await streamRunEvents(req, res, runRegistry, run.run_id, 0, config.heartbeatMs);
+    await streamRunEvents(res, runRegistry, run.run_id, 0, config.heartbeatMs);
     return;
   }
 
@@ -152,7 +170,18 @@ async function routeRequest(
   if (method === "POST" && runStartMatch) {
     const threadId = decodeURIComponent(runStartMatch[1]!);
     const body = RunStreamBodySchema.parse(await readJson(req));
+    assertAttachmentsAllowed(body, uploadService);
     sendJson(res, 202, { run: await runRegistry.startRun(threadId, body) });
+    return;
+  }
+
+  const runRequestMatch = pathname.match(/^\/v1\/threads\/([^/]+)\/runs\/requests\/([^/]+)$/);
+  if (method === "GET" && runRequestMatch) {
+    const result = runRegistry.getRequest(
+      decodeURIComponent(runRequestMatch[1]!),
+      decodeURIComponent(runRequestMatch[2]!)
+    );
+    sendJson(res, result.state === "starting" ? 202 : 200, result);
     return;
   }
 
@@ -163,11 +192,40 @@ async function routeRequest(
     return;
   }
 
+  if (method === "POST" && pathname === "/v1/uploads") {
+    if (!uploadService) throw new AppError(404, "uploads_unavailable", "Uploads are unavailable on this Bridge.");
+    if (req.headers.origin) throw new AppError(403, "origin_not_allowed", "Browser-origin uploads are unavailable.");
+    const release = uploadService.acquireUpload();
+    try {
+      const limit = Math.ceil(config.uploadMaxBytes * 4 / 3) + 64 * 1024;
+      const body = UploadBodySchema.parse(await readJson(req, limit));
+      const attachment = uploadService.save({ name: body.name ?? null, mimeType: body.mime_type ?? null, dataBase64: body.data_base64 });
+      sendJson(res, 201, { attachment });
+    } finally {
+      release();
+    }
+    return;
+  }
+
+  const uploadMatch = pathname.match(/^\/v1\/uploads\/([^/]+)$/);
+  if (method === "DELETE" && uploadMatch) {
+    if (!uploadService) throw new AppError(404, "uploads_unavailable", "Uploads are unavailable on this Bridge.");
+    if (req.headers.origin) throw new AppError(403, "origin_not_allowed", "Browser-origin uploads are unavailable.");
+    uploadService.remove(decodeURIComponent(uploadMatch[1]!));
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+
   const runEventsMatch = pathname.match(/^\/v1\/runs\/([^/]+)\/events\/stream$/);
   if (method === "GET" && runEventsMatch) {
     const runId = decodeURIComponent(runEventsMatch[1]!);
-    const sinceSeq = parseNonNegativeInt(url.searchParams.get("since_seq")) ?? 0;
-    await streamRunEvents(req, res, runRegistry, runId, sinceSeq, config.heartbeatMs);
+    const rawSinceSeq = url.searchParams.get("since_seq");
+    const sinceSeq = rawSinceSeq === null ? 0 : Number(rawSinceSeq);
+    if (!Number.isSafeInteger(sinceSeq) || sinceSeq < 0) {
+      throw new AppError(400, "invalid_cursor", "since_seq must be a nonnegative integer.");
+    }
+    await streamRunEvents(res, runRegistry, runId, sinceSeq, config.heartbeatMs);
     return;
   }
 
@@ -365,8 +423,10 @@ function buildHealthResponse(
 }
 
 function buildCapabilitiesResponse(
+  config: BridgeConfig,
   threadService: BridgeThreadService,
-  workspaceService: WorkspaceService
+  workspaceService: WorkspaceService,
+  uploadService: UploadService | null
 ) {
   return {
     threads: {
@@ -384,12 +444,13 @@ function buildCapabilitiesResponse(
     skills: {
       list: typeof threadService.listSkills === "function"
     },
-    workspaces: workspaceService.capabilities()
+    workspaces: workspaceService.capabilities(),
+    sse_heartbeat_ms: config.heartbeatMs,
+    uploads: { enabled: Boolean(uploadService), max_bytes: config.uploadMaxBytes, max_files: 5 }
   };
 }
 
 async function streamRunEvents(
-  req: IncomingMessage,
   res: ServerResponse,
   runRegistry: RunRegistry,
   runId: string,
@@ -401,13 +462,13 @@ async function streamRunEvents(
   let clientClosed = false;
 
   sse.open();
-  req.on("close", () => {
+  res.on("close", () => {
     clientClosed = true;
     subscription.close();
   });
 
   const heartbeat = setInterval(() => {
-    if (!clientClosed) {
+    if (!clientClosed && !res.writableNeedDrain) {
       sse.write("heartbeat", { ts: new Date().toISOString(), run_id: runId });
     }
   }, heartbeatMs);
@@ -418,8 +479,14 @@ async function streamRunEvents(
       if (clientClosed) {
         break;
       }
-      sse.write(event.event, event.data);
+      if (!sse.write(event.event, event.data)) {
+        await waitForDrain(res);
+      }
     }
+  } catch (error) {
+    // Headers are already sent. The client will reconnect and receive the
+    // structured replay_gap response before a new stream is opened.
+    if (!(error instanceof AppError && error.code === "replay_gap")) throw error;
   } finally {
     clearInterval(heartbeat);
     subscription.close();
@@ -429,16 +496,37 @@ async function streamRunEvents(
   }
 }
 
+function waitForDrain(res: ServerResponse) {
+  return new Promise<void>((resolve, reject) => {
+    if (res.destroyed || res.writableEnded) return resolve();
+    const timer = setTimeout(() => finish(new AppError(408, "slow_subscriber", "SSE subscriber is too slow.")), 30000);
+    timer.unref();
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      res.off("drain", onDrain);
+      res.off("close", onClose);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onDrain = () => finish();
+    const onClose = () => finish();
+    res.once("drain", onDrain);
+    res.once("close", onClose);
+  });
+}
+
 function createDefaultThreadService(
   config: BridgeConfig,
   workspaceService: WorkspaceService,
-  appServerClient: AppServerClient | undefined
+  appServerClient: AppServerClient | undefined,
+  uploadService: UploadService | null
 ): BridgeThreadService {
   if (config.runtime === "app-server") {
     return new AppServerBridgeService({
       config,
       client: appServerClient ?? new AppServerClient(),
-      workspaceService
+      workspaceService,
+      uploadService
     });
   }
 
@@ -448,6 +536,12 @@ function createDefaultThreadService(
     store: new InMemoryThreadStore(),
     workspaceService
   });
+}
+
+function assertAttachmentsAllowed(body: RunStreamBody, uploadService: UploadService | null) {
+  if (!uploadService && body.input_items?.some((item) => item.type === "attachment")) {
+    throw new AppError(400, "uploads_unavailable", "This Bridge runtime does not support attachments.");
+  }
 }
 
 async function normalizeListThreadsResponse(value: unknown) {
@@ -515,15 +609,15 @@ function requireCapability<T extends keyof BridgeThreadService>(
   return value.bind(service) as NonNullable<BridgeThreadService[T]>;
 }
 
-async function readJson(req: IncomingMessage) {
+async function readJson(req: IncomingMessage, maxBytes = 1024 * 1024) {
   const chunks: Buffer[] = [];
   let size = 0;
 
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.byteLength;
-    if (size > 1024 * 1024) {
-      throw new AppError(413, "payload_too_large", "JSON body is larger than 1 MiB.");
+    if (size > maxBytes) {
+      throw new AppError(413, "payload_too_large", `JSON body is larger than ${maxBytes} bytes.`);
     }
     chunks.push(buffer);
   }
@@ -552,7 +646,7 @@ function sendJson(res: ServerResponse, statusCode: number, payload: unknown) {
 
 function applyCorsHeaders(res: ServerResponse) {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
     "Accept,Authorization,Content-Type,X-Requested-With"
