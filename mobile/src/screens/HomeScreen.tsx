@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import {
+  ChevronDown,
   FolderPlus,
   FolderGit2,
   ListTree,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   FlatList,
   Keyboard,
   KeyboardAvoidingView,
@@ -28,6 +30,7 @@ import { IconAction } from "../components/IconAction";
 import { Screen } from "../components/Screen";
 import { StatusPill } from "../components/StatusPill";
 import type { ChatMessage } from "../domain/bridge";
+import { attachmentInputItems, messageForDraft } from "../domain/attachments";
 import { activeMentionTrigger, buildMentionItems, type ComposerMention } from "../domain/mentions";
 import { useBridge } from "../state/BridgeProvider";
 import { colors, spacing } from "../theme/colors";
@@ -39,6 +42,7 @@ import { LimitsModal } from "./home/LimitsModal";
 import { MentionPalette } from "./home/MentionPalette";
 import { MessageBubble } from "./home/MessageBubble";
 import { styles } from "./home/styles";
+import { useStickyChatScroll } from "./home/useStickyChatScroll";
 
 export function HomeScreen() {
   const bridge = useBridge();
@@ -49,16 +53,20 @@ export function HomeScreen() {
   const [selectedMentions, setSelectedMentions] = useState<ComposerMention[]>([]);
   const [limitsVisible, setLimitsVisible] = useState(false);
   const [folderPickerVisible, setFolderPickerVisible] = useState(false);
-  const messageListRef = useRef<FlatList<ChatMessage> | null>(null);
+  const [pendingRequestId, setPendingRequestId] = useState<string | null>(null);
   const mentionLoadRequested = useRef(false);
   const selectedModel = useMemo(
     () => bridge.models.find((model) => model.id === bridge.selectedModelId) ?? null,
     [bridge.models, bridge.selectedModelId]
   );
   const canSend =
-    draft.trim().length > 0 &&
+    (draft.trim().length > 0 || bridge.pendingAttachments.length > 0) &&
     !bridge.isRunning &&
     !bridge.isComposerLocked &&
+    !bridge.hasUncertainSubmission &&
+    !bridge.isUploadingAttachment &&
+    bridge.failedUploadCount === 0 &&
+    bridge.connectionStatus === "connected" &&
     Boolean(bridge.selectedWorkspace);
   const mentionTrigger = useMemo(() => activeMentionTrigger(draft), [draft]);
   const mentionItems = useMemo(
@@ -94,17 +102,19 @@ export function HomeScreen() {
       .join("|");
     return `${last.id}:${last.text.length}:${last.pending ? "p" : "d"}:${partMarker ?? ""}`;
   }, [bridge.messages]);
+  const scroll = useStickyChatScroll(
+    `${bridge.selectedWorkspace?.path ?? "none"}:${bridge.selectedThread?.id ?? "new"}`,
+    `${bridge.messages.length}:${latestMessageMarker}`,
+    keyboardVisible ? keyboardHeight : 0
+  );
 
   useEffect(() => {
-    if (bridge.messages.length === 0) {
-      return;
+    if (pendingRequestId && bridge.lastConfirmedRequestId === pendingRequestId) {
+      setDraft("");
+      setSelectedMentions([]);
+      setPendingRequestId(null);
     }
-
-    const frame = requestAnimationFrame(() => {
-      messageListRef.current?.scrollToEnd({ animated: true });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [bridge.messages.length, latestMessageMarker]);
+  }, [bridge.lastConfirmedRequestId, pendingRequestId]);
 
   useEffect(() => {
     if (Platform.OS !== "android") {
@@ -164,12 +174,20 @@ export function HomeScreen() {
     setDraft((current) => current.replace(mention.token, "").replace(/\s{2,}/g, " "));
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const value = draft;
-    const inputItems = selectedMentions.map((mention) => mention.inputItem);
-    setDraft("");
-    setSelectedMentions([]);
-    void bridge.sendMessage(value, inputItems);
+    const inputItems = [
+      ...selectedMentions.map((mention) => mention.inputItem),
+      ...attachmentInputItems(bridge.pendingAttachments)
+    ];
+    const result = await bridge.sendMessage(messageForDraft(value, bridge.pendingAttachments.length), inputItems);
+    if (result.status === "accepted") {
+      setDraft((current) => current === value ? "" : current);
+      setSelectedMentions([]);
+      setPendingRequestId(null);
+    } else if (result.status === "uncertain") {
+      setPendingRequestId(result.requestId ?? null);
+    }
   };
 
   return (
@@ -196,8 +214,10 @@ export function HomeScreen() {
             </Text>
           </View>
           <StatusPill
-            label={bridge.health?.codex_ready ? "online" : "offline"}
-            tone={bridge.health?.codex_ready ? "ok" : bridge.error ? "error" : "warn"}
+            label={bridge.connectionStatus === "connected"
+              ? (bridge.health?.codex_ready ? "online" : "Codex unavailable")
+              : bridge.connectionStatus === "connecting" ? "connecting" : "reconnecting"}
+            tone={bridge.connectionStatus === "connected" && bridge.health?.codex_ready ? "ok" : "warn"}
           />
           <IconAction icon={FolderGit2} label="Repositories" onPress={() => router.push("/repositories")} />
           <IconAction icon={RefreshCcw} label="Refresh" onPress={() => void bridge.refreshAll()} />
@@ -207,11 +227,21 @@ export function HomeScreen() {
         <LimitsModal visible={limitsVisible} onClose={() => setLimitsVisible(false)} />
         <FolderPickerModal visible={folderPickerVisible} onClose={() => setFolderPickerVisible(false)} />
 
-        {bridge.error ? (
+        {bridge.error || bridge.connectionStatus !== "connected" || bridge.hasUncertainSubmission ? (
           <View style={styles.errorBand}>
             <Text numberOfLines={2} style={styles.errorText}>
-              {bridge.error}
+              {bridge.connectionStatus !== "connected" ? "Waiting for Bridge. Conversations remain available while it reconnects." :
+                bridge.error ?? "A previous send is still being checked. Review the conversation before sending again."}
             </Text>
+            {bridge.hasUncertainSubmission ? (
+              <Pressable accessibilityRole="button" accessibilityLabel="Clear uncertain submission" onPress={() =>
+                Alert.alert("Submission not confirmed", "Sending again may start a duplicate run. Check the conversation first.", [
+                  { text: "Keep waiting", style: "cancel" },
+                  { text: "Clear pending send", onPress: () => { bridge.clearUncertainSubmission(); setPendingRequestId(null); } }
+                ])}>
+                <Text style={styles.errorText}>Clear pending send</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
@@ -237,8 +267,9 @@ export function HomeScreen() {
           </View>
         </View>
 
+        <View style={styles.messageArea}>
         <FlatList
-          ref={messageListRef}
+          ref={scroll.listRef}
           data={bridge.messages}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
@@ -249,6 +280,13 @@ export function HomeScreen() {
           )}
           contentContainerStyle={styles.messageList}
           style={styles.messages}
+          onScroll={scroll.onScroll}
+          onScrollBeginDrag={scroll.onScrollBeginDrag}
+          onScrollEndDrag={scroll.onScrollEndDrag}
+          onMomentumScrollBegin={scroll.onMomentumScrollBegin}
+          onMomentumScrollEnd={scroll.onMomentumScrollEnd}
+          onContentSizeChange={scroll.onContentSizeChange}
+          scrollEventThrottle={16}
           ListEmptyComponent={
             <EmptyChat
               isLoading={bridge.isLoadingThreadContent}
@@ -257,6 +295,13 @@ export function HomeScreen() {
             />
           }
         />
+        {scroll.showJump ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={scroll.jumpToBottom}
+            style={styles.jumpToBottom}>
+            <ChevronDown size={20} color={colors.text} />
+          </Pressable>
+        ) : null}
+        </View>
 
         {mentionTrigger ? (
           <MentionPalette
@@ -273,12 +318,36 @@ export function HomeScreen() {
           <View style={styles.composerRow}>
             <ComposerMenu
               selectedModel={selectedModel}
+              onAttachFile={() => void bridge.pickAttachment()}
+              attachmentEnabled={bridge.capabilities.uploads?.enabled === true && bridge.connectionStatus === "connected"}
               onOpenLimits={() => {
                 setLimitsVisible(true);
                 void bridge.refreshAccount();
               }}
             />
             <View style={styles.composerInputWrap}>
+              {bridge.pendingAttachments.length > 0 || bridge.isUploadingAttachment || bridge.failedUploadCount > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mentionChips}>
+                  {bridge.pendingAttachments.map((attachment) => (
+                    <Pressable key={attachment.id} accessibilityRole="button" accessibilityLabel={`Remove ${attachment.name}`}
+                      onPress={() => void bridge.removePendingAttachment(attachment.id)} style={styles.mentionChip}>
+                      <Text numberOfLines={1} style={styles.mentionChipText}>{attachment.name}</Text>
+                      <X size={12} color={colors.accent} />
+                    </Pressable>
+                  ))}
+                  {bridge.isUploadingAttachment ? <Text style={styles.mentionChipText}>Uploading...</Text> : null}
+                  {bridge.failedUploadCount > 0 ? (
+                    <View style={styles.mentionChip}>
+                      <Pressable accessibilityRole="button" accessibilityLabel="Retry failed uploads" onPress={() => void bridge.retryPendingUploads()}>
+                        <Text style={styles.mentionChipText}>Retry {bridge.failedUploadCount} failed upload(s)</Text>
+                      </Pressable>
+                      <Pressable accessibilityRole="button" accessibilityLabel="Remove failed uploads" onPress={bridge.clearFailedUploads}>
+                        <X size={12} color={colors.accent} />
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </ScrollView>
+              ) : null}
               {selectedMentions.length > 0 ? (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mentionChips}>
                   {selectedMentions.map((mention) => (

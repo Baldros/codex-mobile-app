@@ -52,6 +52,7 @@ function renderBlock(
     return (
       <Text
         key={key}
+        selectable
         style={[
           styles.text,
           variant === "inverted" ? styles.textInverted : null,
@@ -109,6 +110,7 @@ function renderBlock(
               {block.ordered ? `${itemIndex + 1}.` : "-"}
             </Text>
             <Text
+              selectable
               style={[
                 styles.text,
                 styles.listText,
@@ -135,6 +137,7 @@ function renderBlock(
         ]}
       >
         <Text
+          selectable
           style={[
             styles.text,
             styles.quoteText,
@@ -164,6 +167,7 @@ function renderBlock(
   return (
     <Text
       key={key}
+      selectable
       style={[
         styles.text,
         variant === "inverted" ? styles.textInverted : null,

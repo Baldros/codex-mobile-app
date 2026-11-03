@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  Copy,
   Code2,
   FileCode2,
   ShieldCheck,
@@ -12,11 +13,13 @@ import {
   X
 } from "lucide-react-native";
 import type React from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Modal, PanResponder, Pressable, ScrollView, Text, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 
 import { MarkdownText } from "../../components/MarkdownText";
 import type { ChatMessage, ChatMessagePart, PendingApproval } from "../../domain/bridge";
+import { messageTextFromParts } from "../../domain/chatMessageParts";
 import { colors } from "../../theme/colors";
 import { styles } from "./styles";
 
@@ -29,6 +32,20 @@ export function MessageBubble({
 }) {
   const isUser = message.role === "user";
   const parts = messageParts(message);
+  const copyText = !isUser ? messageTextFromParts(parts) : "";
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
+  const copyAll = async () => {
+    try {
+      await Clipboard.setStringAsync(copyText);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    copyTimer.current = setTimeout(() => setCopyState("idle"), 1800);
+  };
 
   return (
     <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
@@ -64,6 +81,15 @@ export function MessageBubble({
             <Text style={styles.workingText}>Working...</Text>
           </View>
         )}
+        {!isUser && copyText ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Copy full response" onPress={() => void copyAll()}
+            style={styles.messageCopyAction}>
+            <Copy size={14} color={copyState === "copied" ? colors.success : colors.textMuted} />
+            <Text style={styles.messageCopyActionText}>
+              {copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy all"}
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );

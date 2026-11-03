@@ -114,6 +114,23 @@ export const styles = StyleSheet.create({
   approvalDeclineText: {
     color: colors.text
   },
+  messageArea: {
+    flex: 1
+  },
+  jumpToBottom: {
+    position: "absolute",
+    right: spacing.lg,
+    bottom: spacing.md,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 3
+  },
   messages: {
     flex: 1
   },
@@ -151,6 +168,19 @@ export const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.sm,
     marginBottom: 4
+  },
+  messageCopyAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+    paddingVertical: spacing.xs
+  },
+  messageCopyActionText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: fontWeights.label
   },
   messageRole: {
     color: colors.textMuted,
