@@ -25,6 +25,10 @@ Open `index.html` and follow the path in order, or jump directly to what you nee
 
 Support files: `styles.css` (theme and OpenAI-inspired palette) and `app.js` (interactions: copy, tabs, checklists, scrollspy).
 
+Engineering decision notes:
+
+- [`mobile-build-toolchain.md`](mobile-build-toolchain.md) - proposed Gradle/Expo version policy, native-project ownership options, tradeoffs, and upgrade triggers.
+
 ---
 
 ## The Build in 1 Minute
