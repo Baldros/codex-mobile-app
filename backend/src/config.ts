@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 import { z } from "zod";
 
 const RuntimeSchema = z.enum(["app-server", "sdk"]);
@@ -14,7 +15,13 @@ const EnvSchema = z.object({
     .optional()
     .transform((value) => value === "true"),
   CODEX_BRIDGE_DEFAULT_MODEL: z.string().optional(),
-  CODEX_BRIDGE_HEARTBEAT_MS: z.coerce.number().int().positive().default(15000)
+  CODEX_BRIDGE_HEARTBEAT_MS: z.coerce.number().int().positive().default(15000),
+  CODEX_BRIDGE_RUN_BUFFER_EVENTS: z.coerce.number().int().positive().default(5000),
+  CODEX_BRIDGE_RUN_RETENTION_MS: z.coerce.number().int().nonnegative().default(300000),
+  CODEX_BRIDGE_UPLOAD_DIR: z.string().optional(),
+  CODEX_BRIDGE_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(15 * 1024 * 1024),
+  CODEX_BRIDGE_UPLOAD_TOTAL_MAX_BYTES: z.coerce.number().int().positive().default(512 * 1024 * 1024),
+  CODEX_BRIDGE_UPLOADS_ENABLED: z.enum(["true", "false"]).optional()
 });
 
 export type BridgeRuntime = z.infer<typeof RuntimeSchema>;
@@ -29,6 +36,12 @@ export type BridgeConfig = {
   defaultSkipGitRepoCheck: boolean;
   defaultModel: string | null;
   heartbeatMs: number;
+  runBufferEvents: number;
+  runRetentionMs: number;
+  uploadDir: string;
+  uploadMaxBytes: number;
+  uploadTotalMaxBytes: number;
+  uploadsEnabled: boolean;
   version: string;
 };
 
@@ -54,6 +67,16 @@ export function getBridgeConfig(env: NodeJS.ProcessEnv = process.env): BridgeCon
     defaultSkipGitRepoCheck: parsed.CODEX_BRIDGE_SKIP_GIT_REPO_CHECK,
     defaultModel: parsed.CODEX_BRIDGE_DEFAULT_MODEL?.trim() || null,
     heartbeatMs: parsed.CODEX_BRIDGE_HEARTBEAT_MS,
+    runBufferEvents: parsed.CODEX_BRIDGE_RUN_BUFFER_EVENTS,
+    runRetentionMs: parsed.CODEX_BRIDGE_RUN_RETENTION_MS,
+    uploadDir: path.resolve(parsed.CODEX_BRIDGE_UPLOAD_DIR ?? path.join(os.homedir(), ".codex-mobile", "uploads")),
+    uploadMaxBytes: parsed.CODEX_BRIDGE_UPLOAD_MAX_BYTES,
+    uploadTotalMaxBytes: parsed.CODEX_BRIDGE_UPLOAD_TOTAL_MAX_BYTES,
+    uploadsEnabled: parsed.CODEX_BRIDGE_HOST !== "0.0.0.0" &&
+      parsed.CODEX_BRIDGE_HOST !== "::" &&
+      (parsed.CODEX_BRIDGE_UPLOADS_ENABLED === "true" ||
+        (parsed.CODEX_BRIDGE_UPLOADS_ENABLED !== "false" &&
+          ["127.0.0.1", "::1", "localhost"].includes(parsed.CODEX_BRIDGE_HOST))),
     version: "0.1.0"
   };
 }

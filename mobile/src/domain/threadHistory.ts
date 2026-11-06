@@ -29,6 +29,7 @@ export function messagesFromThread(thread: BridgeThread) {
     for (const text of textEntries(record.input ?? record.userInput ?? record.prompt)) {
       messages.push({
         id: historyId("history_user", turnId, messages.length),
+        turnId,
         role: "user",
         text
       });
@@ -52,6 +53,7 @@ export function messagesFromThread(thread: BridgeThread) {
         if (text) {
           messages.push({
             id: historyId("history_user", turnId, itemIndex),
+            turnId,
             role: "user",
             text
           });
@@ -106,6 +108,7 @@ export function messagesFromThread(thread: BridgeThread) {
     if (assistantParts.length > 0) {
       messages.push({
         id: historyId("history_assistant", turnId, messages.length),
+        turnId,
         role: "assistant",
         text: messageTextFromParts(assistantParts),
         parts: assistantParts,

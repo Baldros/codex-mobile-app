@@ -18,7 +18,7 @@ export class SseWriter {
   }
 
   write(event: string, data: unknown) {
-    this.res.write(formatSseEvent(event, data));
+    return this.res.write(formatSseEvent(event, data));
   }
 
   end() {

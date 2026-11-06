@@ -22,11 +22,17 @@ const RunInputItemSchema = z.discriminatedUnion("type", [
     uri: z.string().trim().min(1),
     name: z.string().trim().min(1).optional(),
     title: z.string().trim().min(1).optional()
+  }),
+  z.object({
+    type: z.literal("attachment"),
+    id: z.string().regex(/^upload_[0-9a-f-]{36}$/),
+    name: z.string().trim().min(1).max(120)
   })
 ]);
 
 export const RunStreamBodySchema = z.object({
   message: z.string().trim().min(1),
+  client_request_id: z.string().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/).optional(),
   cwd: z.string().trim().min(1).optional(),
   approval_policy: z.enum(["never", "on-request", "on-failure", "untrusted"]).optional(),
   sandbox_mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
@@ -40,6 +46,14 @@ export const RunStreamBodySchema = z.object({
   web_search_mode: z.enum(["disabled", "cached", "live"]).optional(),
   additional_directories: z.array(z.string().trim().min(1)).optional(),
   input_items: z.array(RunInputItemSchema).max(20).optional()
+}).refine((body) => (body.input_items ?? []).filter((item) => item.type === "attachment").length <= 5, {
+  message: "A message may have at most five attachments.", path: ["input_items"]
+});
+
+export const UploadBodySchema = z.object({
+  name: z.string().max(255).optional(),
+  mime_type: z.string().max(120).optional(),
+  data_base64: z.string().min(1)
 });
 
 export const CancelRunBodySchema = z.object({

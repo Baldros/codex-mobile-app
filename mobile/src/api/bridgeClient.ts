@@ -17,6 +17,7 @@ import type {
   PendingApproval,
   RunStreamBody,
   ThreadArchiveResponse,
+  UploadedAttachment,
   WorkspaceMutationResponse,
   WorkspaceEntry
 } from "../domain/bridge";
@@ -45,12 +46,23 @@ export class BridgeClient {
     private readonly options: BridgeClientOptions = {}
   ) {}
 
-  health() {
-    return this.requestJson<BridgeHealth>("/health");
+  health(signal?: AbortSignal) {
+    return this.requestJson<BridgeHealth>("/health", signal ? { signal } : {});
   }
 
-  capabilities() {
-    return this.requestJson<BridgeCapabilities>("/v1/capabilities");
+  capabilities(signal?: AbortSignal) {
+    return this.requestJson<BridgeCapabilities>("/v1/capabilities", signal ? { signal } : {});
+  }
+
+  uploadAttachment(input: { name: string; mimeType?: string | null; dataBase64: string }) {
+    return this.requestJson<{ attachment: UploadedAttachment }>("/v1/uploads", {
+      method: "POST",
+      body: JSON.stringify({ name: input.name, mime_type: input.mimeType, data_base64: input.dataBase64 })
+    });
+  }
+
+  removeAttachment(id: string) {
+    return this.requestJson<void>(`/v1/uploads/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
   async listWorkspaces() {
@@ -257,6 +269,22 @@ export class BridgeClient {
     return this.requestJson<ListResponse<BridgeRunSummary>>(`/v1/runs/active${suffix}`);
   }
 
+  startRun(threadId: string, body: RunStreamBody, signal?: AbortSignal) {
+    return this.requestJson<{ run: BridgeRunSummary }>(`/v1/threads/${encodeURIComponent(threadId)}/runs`, {
+      method: "POST", body: JSON.stringify(body), ...(signal ? { signal } : {})
+    });
+  }
+
+  getRun(runId: string, signal?: AbortSignal) {
+    return this.requestJson<{ run: BridgeRunSummary }>(`/v1/runs/${encodeURIComponent(runId)}`, signal ? { signal } : {});
+  }
+
+  getRunRequest(threadId: string, requestId: string, signal?: AbortSignal) {
+    return this.requestJson<{ state: "starting" | "known"; run: BridgeRunSummary | null }>(
+      `/v1/threads/${encodeURIComponent(threadId)}/runs/requests/${encodeURIComponent(requestId)}`, signal ? { signal } : {}
+    );
+  }
+
   async streamRun(
     threadId: string,
     body: RunStreamBody,
@@ -320,6 +348,8 @@ export class BridgeClient {
     if (!response.ok) {
       throw await toBridgeError(response);
     }
+
+    if (response.status === 204) return undefined as T;
 
     return (await response.json()) as T;
   }
@@ -408,12 +438,19 @@ function decodeChunk(value: Uint8Array | undefined, decoder: TextDecoder | null)
     .join("");
 }
 
-async function toBridgeError(response: Response) {
+export type BridgeRequestError = Error & { status?: number; code?: string | undefined; details?: Record<string, unknown> | undefined };
+
+async function toBridgeError(response: Response): Promise<BridgeRequestError> {
+  let code: string | undefined;
+  let details: Record<string, unknown> | undefined;
+  let message = `Bridge request failed with ${response.status}`;
   try {
-    const payload = (await response.json()) as { error?: { message?: string; code?: string } };
-    const message = payload.error?.message ?? payload.error?.code;
-    return new Error(message ?? `Bridge request failed with ${response.status}`);
+    const payload = (await response.json()) as { error?: { message?: string; code?: string; details?: Record<string, unknown> } };
+    code = payload.error?.code;
+    details = payload.error?.details;
+    message = payload.error?.message ?? message;
   } catch {
-    return new Error(`Bridge request failed with ${response.status}`);
+    // Preserve the HTTP status when a proxy returns a non-JSON error.
   }
+  return Object.assign(new Error(message), { status: response.status, code, details });
 }

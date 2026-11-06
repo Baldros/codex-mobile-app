@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { AppError } from "../errors.js";
 import type { BridgeSseEvent } from "../sse.js";
 import type { RunStreamBody } from "../validation.js";
-import { AsyncQueue } from "../asyncQueue.js";
 import type { BridgeThreadService } from "../appServer/types.js";
 
 export type BridgeRunStatus = "starting" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled";
@@ -31,25 +30,49 @@ type RunRecord = {
   error: string | null;
   controller: AbortController;
   events: BridgeSseEvent[];
-  subscribers: Set<AsyncQueue<BridgeSseEvent>>;
+  subscribers: Set<RunSubscriber>;
+  clientRequestId?: string | undefined;
+  requestFingerprint?: string | undefined;
   ready: Promise<RunRecord>;
   resolveReady: (record: RunRecord) => void;
   rejectReady: (error: Error) => void;
 };
 
+type RunSubscriber = {
+  closed: boolean;
+  wake: (() => void) | null;
+};
+
 export class RunRegistry {
   private readonly runs = new Map<string, RunRecord>();
   private readonly activeByThread = new Map<string, RunRecord>();
+  private readonly requests = new Map<string, RunRecord>();
   private readonly maxBufferedEvents: number;
+  private readonly retentionMs: number;
+  private readonly retentionTimers = new Set<NodeJS.Timeout>();
+  private disposed = false;
 
   constructor(
     private readonly threadService: BridgeThreadService,
-    options: { maxBufferedEvents?: number } = {}
+    options: { maxBufferedEvents?: number; runRetentionMs?: number } = {}
   ) {
-    this.maxBufferedEvents = options.maxBufferedEvents ?? 1000;
+    this.maxBufferedEvents = options.maxBufferedEvents ?? 5000;
+    this.retentionMs = options.runRetentionMs ?? 300_000;
   }
 
   async startRun(threadId: string, input: RunStreamBody) {
+    if (this.disposed) throw new AppError(503, "bridge_stopping", "Bridge is stopping.");
+    const requestKey = input.client_request_id ? `${threadId}\0${input.client_request_id}` : null;
+    if (requestKey) {
+      const previous = this.requests.get(requestKey);
+      if (previous) {
+        if (previous.requestFingerprint !== JSON.stringify(input)) {
+          throw new AppError(409, "request_id_conflict", "Request ID was used with different input.");
+        }
+        await previous.ready;
+        return toSummary(previous);
+      }
+    }
     const existing = this.activeByThread.get(threadId);
     if (existing && isActive(existing.status)) {
       throw new AppError(
@@ -60,10 +83,26 @@ export class RunRegistry {
     }
 
     const record = createRunRecord(threadId, input.cwd);
+    record.clientRequestId = input.client_request_id;
+    record.requestFingerprint = JSON.stringify(input);
+    if (requestKey) {
+      this.requests.set(requestKey, record);
+    }
     this.activeByThread.set(threadId, record);
     void this.consumeRun(record, input);
     await record.ready;
     return toSummary(record);
+  }
+
+  getRequest(threadId: string, requestId: string) {
+    const record = this.requests.get(`${threadId}\0${requestId}`);
+    if (!record) {
+      throw new AppError(404, "run_request_not_found", "Run request is not retained.");
+    }
+    return {
+      state: record.status === "starting" ? "starting" : "known",
+      run: record.runId ? toSummary(record) : null
+    };
   }
 
   listActiveRuns(filters: { threadId?: string | null; cwd?: string | null } = {}) {
@@ -91,25 +130,55 @@ export class RunRegistry {
       throw new AppError(404, "run_not_found", `Run not found: ${runId}`);
     }
 
-    const queue = new AsyncQueue<BridgeSseEvent>();
-    for (const event of record.events) {
-      const seq = eventSeq(event);
-      if (seq > sinceSeq) {
-        queue.push(event);
-      }
+    if (!Number.isSafeInteger(sinceSeq) || sinceSeq < 0 || sinceSeq > record.lastEventSeq) {
+      throw new AppError(400, "invalid_cursor", "Invalid run event cursor.");
     }
-
-    if (isActive(record.status)) {
-      record.subscribers.add(queue);
-    } else {
-      queue.close();
+    if (sinceSeq < oldestSeq(record) - 1) {
+      throw replayGap(record, sinceSeq);
     }
-
+    if (record.subscribers.size >= 16) {
+      throw new AppError(429, "too_many_subscribers", "Run has too many event subscribers.");
+    }
+    const subscriber: RunSubscriber = { closed: false, wake: null };
+    record.subscribers.add(subscriber);
+    let nextSeq = sinceSeq + 1;
     return {
-      events: queue as AsyncIterable<BridgeSseEvent>,
+      events: (async function* () {
+        try {
+          while (!subscriber.closed) {
+            if (nextSeq < oldestSeq(record)) {
+              throw replayGap(record, nextSeq - 1);
+            }
+            if (nextSeq <= record.lastEventSeq) {
+              const event = record.events[(nextSeq - 1) % record.events.length];
+              // The ring may have wrapped after the bounds check above.
+              if (!event || eventSeq(event) !== nextSeq) {
+                throw replayGap(record, nextSeq - 1);
+              }
+              nextSeq += 1;
+              yield event;
+              continue;
+            }
+            if (!isActive(record.status)) {
+              return;
+            }
+            await new Promise<void>((resolve) => {
+              subscriber.wake = resolve;
+              if (subscriber.closed || nextSeq <= record.lastEventSeq || !isActive(record.status)) {
+                subscriber.wake = null;
+                resolve();
+              }
+            });
+          }
+        } finally {
+          record.subscribers.delete(subscriber);
+        }
+      })(),
       close: () => {
-        record.subscribers.delete(queue);
-        queue.close();
+        subscriber.closed = true;
+        record.subscribers.delete(subscriber);
+        subscriber.wake?.();
+        subscriber.wake = null;
       }
     };
   }
@@ -197,32 +266,70 @@ export class RunRegistry {
       if (this.activeByThread.get(record.threadId) === record) {
         this.activeByThread.delete(record.threadId);
       }
-      if (!record.runId) {
+      if (!record.runId && !this.disposed) {
         record.runId = record.internalId;
         this.runs.set(record.runId, record);
         record.resolveReady(record);
       }
-      for (const subscriber of record.subscribers) {
-        subscriber.close();
-      }
+      this.notify(record);
       record.subscribers.clear();
+      if (!this.disposed) this.scheduleRetention(record);
     }
   }
 
   private bufferEvent(record: RunRecord, event: BridgeSseEvent) {
     const buffered = withEventSeq(event, ++record.lastEventSeq);
-    record.events.push(buffered);
-    if (record.events.length > this.maxBufferedEvents) {
-      record.events.splice(0, record.events.length - this.maxBufferedEvents);
-    }
+    const slot = (record.lastEventSeq - 1) % this.maxBufferedEvents;
+    record.events[slot] = buffered;
     record.updatedAt = new Date().toISOString();
     return buffered;
   }
 
   private publish(record: RunRecord, event: BridgeSseEvent) {
+    void event;
+    this.notify(record);
+  }
+
+  private notify(record: RunRecord) {
     for (const subscriber of record.subscribers) {
-      subscriber.push(event);
+      const wake = subscriber.wake;
+      subscriber.wake = null;
+      wake?.();
     }
+  }
+
+  private scheduleRetention(record: RunRecord) {
+    const timer = setTimeout(() => {
+      this.retentionTimers.delete(timer);
+      if (isActive(record.status)) return;
+      if (record.runId) this.runs.delete(record.runId);
+      if (record.clientRequestId) this.requests.delete(`${record.threadId}\0${record.clientRequestId}`);
+      record.events.length = 0;
+      record.subscribers.clear();
+    }, this.retentionMs);
+    timer.unref();
+    this.retentionTimers.add(timer);
+  }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const timer of this.retentionTimers) clearTimeout(timer);
+    this.retentionTimers.clear();
+    const records = new Set([...this.runs.values(), ...this.activeByThread.values()]);
+    for (const record of records) {
+      record.controller.abort();
+      if (!record.runId) record.rejectReady(new AppError(503, "bridge_stopping", "Bridge is stopping."));
+      for (const subscriber of record.subscribers) {
+        subscriber.closed = true;
+        subscriber.wake?.();
+      }
+      record.subscribers.clear();
+      record.events.length = 0;
+    }
+    this.runs.clear();
+    this.activeByThread.clear();
+    this.requests.clear();
   }
 
   private updateRecordFromEvent(record: RunRecord, event: BridgeSseEvent) {
@@ -335,6 +442,19 @@ function withEventSeq(event: BridgeSseEvent, seq: number): BridgeSseEvent {
 function eventSeq(event: BridgeSseEvent) {
   const data = event.data as Record<string, unknown>;
   return typeof data.event_seq === "number" ? data.event_seq : 0;
+}
+
+function oldestSeq(record: RunRecord) {
+  return Math.max(1, record.lastEventSeq - record.events.length + 1);
+}
+
+function replayGap(record: RunRecord, requestedSinceSeq: number) {
+  return new AppError(409, "replay_gap", "Run event history no longer covers the requested cursor.", {
+    run_id: record.runId ?? record.internalId,
+    requested_since_seq: requestedSinceSeq,
+    oldest_available_seq: oldestSeq(record),
+    latest_seq: record.lastEventSeq
+  });
 }
 
 function asString(value: unknown) {

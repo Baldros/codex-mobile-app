@@ -4,7 +4,8 @@ export class AppError extends Error {
   constructor(
     public readonly statusCode: number,
     public readonly code: string,
-    message: string
+    message: string,
+    public readonly details?: Record<string, unknown>
   ) {
     super(message);
     this.name = "AppError";
@@ -17,7 +18,8 @@ export function getErrorPayload(error: unknown) {
       statusCode: error.statusCode,
       error: {
         code: error.code,
-        message: error.message
+        message: error.message,
+        ...(error.details ? { details: error.details } : {})
       }
     };
   }
